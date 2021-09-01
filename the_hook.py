@@ -25,7 +25,10 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=['playlist-read-private']))
 
 
 def get_playlist(pl_name: str) -> Playlist:
-    # Not sure if this really needs to return a Playlist instead of a dict
+    """Get the playlist called :param pl_name: and return it as a Playlist object.
+
+    :returns: A Playlist object for the playlist called `pl_name`, or None if one can't be found
+    """
     p = sp.search(q=pl_name, type='playlist', limit=1)
     if not p:
         # TODO: Need to differentiate from the error below
@@ -33,15 +36,15 @@ def get_playlist(pl_name: str) -> Playlist:
         return None
 
     p = p['playlists']['items'][0]
-    if not p:  # Is this even possible? I feel like it would be [] if anything, not [*]
+    if not p:  # TODO: Is this even possible? I feel like it would be [] if anything, not [*]
         print(f'No playlist data returned from Spotify for {pl_name}')
         return None
 
     return Playlist(p)
 
 
-def get_playlist_tracks(pl_id: str) -> [dict]:
-    """Return a list of all the tracks in the playlist with id `pl_id`
+def get_playlist_tracks(pl_id: str) -> [Track]:
+    """Return a list of all the Tracks in the playlist with id :param pl_id:
 
     :param pl_id: The 'id' attribute of the Playlist object
     :returns tracks: A List of Track objects in the Playlist
@@ -50,38 +53,71 @@ def get_playlist_tracks(pl_id: str) -> [dict]:
     limit = 100
     offset = 0
     track_obj = sp.playlist_tracks(pl_id, limit=limit, offset=offset)
-    tracks = track_obj['items']
+    tracks = [Track(t) for t in track_obj['items']]
 
     while len(tracks) < track_obj['total']:
         offset += limit
         track_obj = sp.playlist_tracks(pl_id, limit=limit, offset=offset)
-        tracks.extend(track_obj['items'])
+        tracks.extend([Track(t) for t in track_obj['items']])
 
     return tracks
 
 
 def get_tracks_from_playlist_name(pl_name: str) -> [dict]:
-    return get_playlist_tracks(get_playlist(pl_name).pl['id'])
+    return get_playlist_tracks(get_playlist(pl_name).ID)
 
 
-def artists_and_title_list(track_list: [dict], limit: int = None) -> [str]:
+def artists_and_title_list(tracks: [Track], limit: int = None) -> [str]:
     """Return a list of strings corresponding to artist names and the track title
 
-    :param track_list: List of tracks from the Spotify Playlist response
-    :type track_list: dict
+    :param tracks: List of Track objects
+    :type tracks: [Track]
     :param limit: Maximum number of strings to return
     :type limit: int, optional
     :returns: List of '<artist name(s)> - <title>' strings for Tracks in the input :param track_list:
     """
     lst = []
-    for n, t in enumerate([tr['track'] for tr in track_list]):
+    for n, t in enumerate([tr.track for tr in tracks]):
         if limit and n >= limit:
             break
 
         # ', '-separated list of artist names, minus the ending ', ', plus ' - ' and Track name
-        lst.append(''.join([f'{a["name"]}, ' for a in t['artists']])[:-2] + f' - {t["name"]}')
+        lst.append(''.join([f'{a["name"]}, ' for a in t.artists])[:-2] + f' - {t.name}')
 
     return lst
+
+
+class Track():
+    """Container for Spotify Track objects to reduce the amount of identical sub-dict code around."""
+
+    def __init__(self, track: dict):
+        self.raw = track
+
+    @property
+    def track(self) -> dict:
+        """Return the Track's 'track' data"""
+        return self.raw['track']
+
+    @property
+    def ID(self) -> str:
+        """Returns the Track's 'id' data"""
+        # TODO: Consider changing this to `tid` instead
+        return self.track['id']
+
+    @property
+    def artists(self):  # TODO: -> [dict] ?
+        """Return the Track's 'artists' data"""
+        return self.track['artists']
+
+    @property
+    def name(self) -> str:
+        """Return the Track's 'name' data"""
+        return self.track['name']
+
+    @property
+    def album(self) -> str:
+        """Return the Track's 'album' data"""
+        return self.track['album']
 
 
 class Playlist():
@@ -98,26 +134,38 @@ class Playlist():
     """
 
     def __init__(self, pl: dict):
-        self.pl = pl
+        self.data = pl
         self.tracks = get_playlist_tracks(pl['id'])
+
+    @property
+    def ID(self) -> str:
+        """Return the Playlist's 'id' data"""
+        # TODO: Consider changing this to `plid` or `pid` instead
+        return self.data['id']
+
+    @property
+    def snapshot_id(self) -> str:
+        """Return the Playlist's 'snapshot_id' data"""
+        # TODO: Consider adding a `sid` alias for this
+        return self.data['snapshot_id']
 
     def artists_and_title_list(self, limit: int = None) -> [str]:
         return artists_and_title_list(self.tracks, limit)
 
-    def get_differences(self, other_pl: Playlist) -> ([dict], [dict]):
+    def get_differences(self, other_pl: Playlist) -> ([Track], [Track]):
         """Compare this Playlist's Tracks to `other_pl`'s Tracks and return the differences.
 
         :param other_pl: Another Playlist object with Tracks to compare.
                          Can be the same Playlist with a different Snapshot id.
         :type other_pl: Playlist
-        :returns: A tuple with dicts of unique Tracks from this playlist and `other_pl`, respectively
+        :returns: A tuple with Lists of unique Tracks from this playlist and `other_pl`, respectively
         """
         # Runtime complexity can absolutely be improved here
-        self_td = {t['track']['id']: t for t in self.tracks}
-        other_tracks = [t for t in other_pl.tracks if t['track']['id'] not in self_td]
+        self_td = {t.ID: t for t in self.tracks}
+        other_tracks = [t for t in other_pl.tracks if t.ID not in self_td]
 
-        other_td = {t['track']['id']: t for t in other_pl.tracks}
-        self_tracks = [self_td[t] for t in self_td if t not in other_td]
+        other_td = {t.ID: t for t in other_pl.tracks}
+        self_tracks = [self_td[tid] for tid in self_td if tid not in other_td]
 
         return (self_tracks, other_tracks)
 
@@ -186,7 +234,7 @@ class BotManager(commands.Cog):
 
     def _save_snapshot_id(self):
         with open(self.snap_id_fname, 'w') as f:
-            f.write(self.pl.pl['snapshot_id'])
+            f.write(self.pl.snapshot_id)
 
     def _update_snapshot_id(self) -> bool:
         """Compare self.snap_id to the snapshot id of self.pl and update self.snap_id if needed.
@@ -207,16 +255,16 @@ class BotManager(commands.Cog):
             return True
 
         # FIXME: The snapshot id comparison needs to happen after the playlist is retrieved
-        if self.snap_id != self.pl.pl['snapshot_id']:
+        if self.snap_id != self.pl.snapshot_id:
             print('Snap ids do not match')
-            self.snap_id = self.pl.pl['snapshot_id']
+            self.snap_id = self.pl.snapshot_id
             self._save_snapshot_id()
             return True
 
         print('No difference in snapshot ids. Log this or something')
         return False
 
-    def _embed_from_track(self, track: dict, new=True, pl_name=None) -> discord.embeds.Embed:
+    def _embed_from_track(self, track: Track, new=True, pl_name=None) -> discord.embeds.Embed:
         """Testing embeds
 
         :param track: Spotify Track dict for the embedded song. Not just the ['track'] part.
@@ -225,27 +273,26 @@ class BotManager(commands.Cog):
         :type new: bool, optional
         """
         # TODO: There are two API calls in this function. See if they can be made redundant
-        artists = ''.join([f'**{a["name"]}**, ' for a in track['track']['artists']])[:-2]
+        artists = ''.join([f'**{a["name"]}**, ' for a in track.artists])[:-2]
         # Spotify green, or some red-ish analogoue of its purple-ish tetradic color
         color = discord.Color.from_rgb(30, 215, 96) if new else discord.Color.from_rgb(186, 30, 53)
-        genres = sp.artist(track['track']['artists'][0]['id'])['genres']
+        genres = sp.artist(track.artists[0]['id'])['genres']
         pl_name = pl_name or self.pl_name
 
         e = discord.embeds.Embed(
-            title=track['track']['name'],
+            title=track.name,
             type='rich',
-            description=f'{artists} • *{track["track"]["album"]["name"]}*',
-            url=track['track']['album']['external_urls']['spotify'],
-            timestamp=datetime.fromisoformat(track['added_at'][:-1]),  # [:-1] to remove 'Z'ms
+            description=f'{artists} • *{track.album["name"]}*',
+            url=track.album['external_urls']['spotify'],
+            timestamp=datetime.fromisoformat(track.raw['added_at'][:-1]),  # [:-1] to remove 'Z'ms
             color=color,
         ).set_thumbnail(
-            url=track['track']['album']['images'][0]['url'],
+            url=track.album['images'][0]['url'],
         ).set_author(
             # TODO: add "by {user}" (if new?) in case there's no pfp or it's not obvious who did it
             name='Song {} "{}"'.format('added to' if new else 'removed from', pl_name),
-            url=track['track']['external_urls']['spotify'],
-            # FIXME: Not sure if available for deleted tracks
-            icon_url=sp.user(track['added_by']['id'])['images'][0]['url'] if new else discord.Embed.Empty,
+            url=track.raw['track']['external_urls']['spotify'],
+            icon_url=sp.user(track.raw['added_by']['id'])['images'][0]['url'] if new else discord.Embed.Empty,
         )
 
         if new:
@@ -261,13 +308,15 @@ class BotManager(commands.Cog):
         # TODO: Testing with one track for now, but this needs to be expanded
         await ctx.send(embed=self._embed_from_track(self.pl.tracks[0]))
 
-    @commands.command(name='playlist')
+    @commands.command(name='playlist', aliases=['pl'])
     async def playlist(self, ctx):
-        await ctx.send(self.pl.pl['external_urls']['spotify'])
+        await ctx.send(self.pl.data['external_urls']['spotify'])
 
     @commands.command(name='check')
     async def check(self, ctx):
+        await ctx.send('Checking for updates...')
         await self.check_for_updates()
+        # TODO: React with something on the original message to show that the check is complete
 
     @commands.command(name='pdb', hidden=True)
     async def pdb(self, ctx):
@@ -279,7 +328,7 @@ class BotManager(commands.Cog):
     async def check_for_updates(self):
         """Check for and notify about playlist updates once every 20 minutes."""
         p = get_playlist(self.pl_name)
-        if p.pl['snapshot_id'] != self.snap_id:
+        if p.snapshot_id != self.snap_id:
             # Snapshot ids differ. Need to send updates and then save the new pl
             # FIXME: For some reason the updated tracks aren't being returned here :\
             print('check_for_updates: snapshot ids differ')
