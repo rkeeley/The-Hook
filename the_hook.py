@@ -24,6 +24,22 @@ bot = commands.Bot(intents=intents, command_prefix=bot_prefix)
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=['playlist-read-private']))
 
 
+def get_playlist(pl_name: str) -> Playlist:
+    # Not sure if this really needs to return a Playlist instead of a dict
+    p = sp.search(q=pl_name, type='playlist', limit=1)
+    if not p:
+        # TODO: Need to differentiate from the error below
+        print(f'Failed to get playlist "{pl_name}" from Spotify')
+        return None
+
+    p = p['playlists']['items'][0]
+    if not p:  # Is this even possible? I feel like it would be [] if anything, not [*]
+        print(f'No playlist data returned from Spotify for {pl_name}')
+        return None
+
+    return Playlist(p)
+
+
 def get_playlist_tracks(pl_id: str) -> [dict]:
     """Return a list of all the tracks in the playlist with id `pl_id`
 
@@ -44,16 +60,21 @@ def get_playlist_tracks(pl_id: str) -> [dict]:
     return tracks
 
 
-def artists_and_title_list(playlist: Playlist, limit: int = None) -> [str]:
+def get_tracks_from_playlist_name(pl_name: str) -> [dict]:
+    return get_playlist_tracks(get_playlist(pl_name).pl['id'])
+
+
+def artists_and_title_list(track_list: [dict], limit: int = None) -> [str]:
     """Return a list of strings corresponding to artist names and the track title
 
-    :param playlist: Playlist object containing Tracks
+    :param track_list: List of tracks from the Spotify Playlist response
+    :type track_list: dict
     :param limit: Maximum number of strings to return
     :type limit: int, optional
-    :returns: List of '<artist name(s)> - <title>' strings for Tracks in the stored Playlist
+    :returns: List of '<artist name(s)> - <title>' strings for Tracks in the input :param track_list:
     """
     lst = []
-    for n, t in enumerate([tr['track'] for tr in playlist.tracks]):
+    for n, t in enumerate([tr['track'] for tr in track_list]):
         if limit and n >= limit:
             break
 
@@ -80,9 +101,8 @@ class Playlist():
         self.pl = pl
         self.tracks = get_playlist_tracks(pl['id'])
 
-    # TODO: Remove? This was originally here, but it's useful for Tracks on their own
     def artists_and_title_list(self, limit: int = None) -> [str]:
-        return artists_and_title_list(self, limit)
+        return artists_and_title_list(self.tracks, limit)
 
     def get_differences(self, other_pl: Playlist) -> ([dict], [dict]):
         """Compare this Playlist's Tracks to `other_pl`'s Tracks and return the differences.
@@ -95,17 +115,42 @@ class Playlist():
         # Runtime complexity can absolutely be improved here
         self_td = {t['track']['id']: t for t in self.tracks}
         other_tracks = [t for t in other_pl.tracks if t['track']['id'] not in self_td]
-        self_tracks = [self_td[t] for t in self_td if t not in other_tracks]
+
+        other_td = {t['track']['id']: t for t in other_pl.tracks}
+        self_tracks = [self_td[t] for t in self_td if t not in other_td]
+
         return (self_tracks, other_tracks)
 
 
 class BotManager(commands.Cog):
-    """Manages bot configuration data"""
+    """Manages Bot configuration data and commands.
+
+    :attr bot: Bot instance for this script
+    :type bot: discord.ext.commands.bot.Bot
+
+    :attr pl_name: Name of the playlist to be watched
+    :type pl_name: str
+
+    :attr pl: Playlist object for :attr pl_name:
+    :type pl: Playlist
+
+    :attr snap_id_fname: Name of the shapshot id file
+    :type snap_id_fname: str
+
+    :attr snap_id: The most recent snapshot seen for :attr pl:.
+        This will differ from the ID saved in the :attr snap_id_fname: from when the playlist is
+        queried for updates to when the updates have been posted to the channel.
+    :type snap_id: str
+
+    :attr update_channel: The Discord Channel to which playlist update messages should be sent
+    :type update_channel: discord.channel.TextChannel
+    """
 
     def __init__(self, bot):
         self.bot = bot
         self.pl_name = config('HOOK_PLAYLIST_NAME', cast=str)
         self.pl = None
+        self.update_channel = None
         self.snap_id_fname = 'snapshot-id.txt'
         self.snap_id = ''
 
@@ -114,59 +159,62 @@ class BotManager(commands.Cog):
         except UndefinedValueError:
             print(f'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using {self.snap_id_fname} instead.')
 
+        if not self._set_playlist():
+            raise Exception('Failed to get playlist from Spotify')  # TODO: Better exception
+
+        # TODO: Replace with a load_snap_id() function or something
         if path_exists(self.snap_id_fname):
             with open(self.snap_id_fname, 'r') as f:
                 self.snap_id = f.read()
         else:
-            print(f'No file {self.snap_id_fname} found. The snapshot id will be saved to {self.snap_id_fname}.')
+            self._update_snapshot_id()
 
-        if not self._get_playlist():
-            raise Exception('Failed to get playlist from Spotify')  # TODO: Better exception
+        self.check_for_updates.start()
 
-    def _get_playlist(self) -> bool:
-        """Get the playlist object from Spotify. Returns True if successful; False otherwise.
+    def _set_playlist(self) -> bool:
+        """Get the playlist from Spotify and set self.pl to it.
 
-        I should eventually figure out how to turn this into a bot command
+        :returns: True if successful, False otherwise
+        :rtype bool:
         """
-        p = sp.search(q=self.pl_name, type='playlist', limit=1)
+        p = get_playlist(self.pl_name)
         if not p:
-            # TODO: Need to differentiate this error from the one below
-            print('Failed to get playlist from Spotify')
             return False
 
-        p = p['playlists']['items'][0]
-        if not p:
-            print('No playlist data returned from Spotify')
-            return False
-
-        self.pl = Playlist(p)
+        self.pl = p
         return True
 
+    def _save_snapshot_id(self):
+        with open(self.snap_id_fname, 'w') as f:
+            f.write(self.pl.pl['snapshot_id'])
+
     def _update_snapshot_id(self) -> bool:
-        """Compare internal snapshot ids and send updates if they differ.
+        """Compare self.snap_id to the snapshot id of self.pl and update self.snap_id if needed.
 
-        This function assumes that _get_playlist has been called since the previous snapshot id update.
+        This will also save the snap_id to the file, but that might need to change when a database
+        is added.
 
-        Not sure what I want to do with params (e.g. don't send message) or return value yet.
+        This does not affect the pl attribute or any attribute besides snap_id.
+
+        :returns: True if the snapshot id is new; False otherwise
+        :rtype bool:
         """
 
         if not self.snap_id:
             # First time running this script or using this snapshot id file. Save the id and return
             print(f'Saving snapshot id to {self.snap_id_fname} - new file or first run')
-            with open(self.snap_id_fname, 'w') as f:
-                f.write(self.pl.pl['snapshot_id'])
+            self._save_snapshot_id()
             return True
 
+        # FIXME: The snapshot id comparison needs to happen after the playlist is retrieved
         if self.snap_id != self.pl.pl['snapshot_id']:
-            # TODO: Call function to prepare and/or send message
-            print('This is when a message would be sent with the playlist differences')
-        else:
-            print('No difference in snapshot ids. Log this or something')
-            return False
+            print('Snap ids do not match')
+            self.snap_id = self.pl.pl['snapshot_id']
+            self._save_snapshot_id()
+            return True
 
-        self.snap_id = self.pl.pl['snapshot_id']
-        # TODO: Write update to the snap id file
-        return True
+        print('No difference in snapshot ids. Log this or something')
+        return False
 
     def _embed_from_track(self, track: dict, new=True, pl_name=None) -> discord.embeds.Embed:
         """Testing embeds
@@ -183,24 +231,30 @@ class BotManager(commands.Cog):
         genres = sp.artist(track['track']['artists'][0]['id'])['genres']
         pl_name = pl_name or self.pl_name
 
-        return discord.embeds.Embed(
+        e = discord.embeds.Embed(
             title=track['track']['name'],
             type='rich',
             description=f'{artists} • *{track["track"]["album"]["name"]}*',
             url=track['track']['album']['external_urls']['spotify'],
             timestamp=datetime.fromisoformat(track['added_at'][:-1]),  # [:-1] to remove 'Z'ms
             color=color,
-        ).add_field(
-            name='Potential Genres',
-            value=' • '.join(random.sample(genres, min(4, len(genres)))),
         ).set_thumbnail(
             url=track['track']['album']['images'][0]['url'],
         ).set_author(
+            # TODO: add "by {user}" (if new?) in case there's no pfp or it's not obvious who did it
             name='Song {} "{}"'.format('added to' if new else 'removed from', pl_name),
             url=track['track']['external_urls']['spotify'],
             # FIXME: Not sure if available for deleted tracks
-            icon_url=sp.user(track['added_by']['id'])['images'][0]['url'],
+            icon_url=sp.user(track['added_by']['id'])['images'][0]['url'] if new else discord.Embed.Empty,
         )
+
+        if new:
+            e.add_field(
+                name='Potential Genres',
+                value=' • '.join(random.sample(genres, min(4, len(genres)))),
+            )
+
+        return e
 
     @commands.command(name='embed')
     async def embed_test(self, ctx):
@@ -211,22 +265,49 @@ class BotManager(commands.Cog):
     async def playlist(self, ctx):
         await ctx.send(self.pl.pl['external_urls']['spotify'])
 
-    @tasks.loop(minutes=20.0)
+    @commands.command(name='check')
+    async def check(self, ctx):
+        await self.check_for_updates()
+
+    @commands.command(name='pdb', hidden=True)
+    async def pdb(self, ctx):
+        """Drop the process running the bot into pdb"""
+        breakpoint()
+        print('Entered pdb')
+
+    @tasks.loop(minutes=1.0)
     async def check_for_updates(self):
         """Check for and notify about playlist updates once every 20 minutes."""
-        if self._get_playlist() and self._update_snapshot_id():
-            # TODO: ? Maybe don't call it like this
-            print('updated playlist and snapshot id')
-        print('checked for updates just now')
-        print('\n'.join(self.pl.artists_and_title_list()))  # Can't ctx.send here because no context
+        p = get_playlist(self.pl_name)
+        if p.pl['snapshot_id'] != self.snap_id:
+            # Snapshot ids differ. Need to send updates and then save the new pl
+            # FIXME: For some reason the updated tracks aren't being returned here :\
+            print('check_for_updates: snapshot ids differ')
+
+            removed_tracks, new_tracks = self.pl.get_differences(p)
+            for t in removed_tracks:
+                await self.update_channel.send(embed=self._embed_from_track(t, new=False))
+
+            for t in new_tracks:
+                await self.update_channel.send(embed=self._embed_from_track(t))
+
+            # FIXME: self.pl is updated, but not self.pl.tracks?
+            self.pl = p
+            self._update_snapshot_id()
+
+    @check_for_updates.before_loop
+    async def before_bot_ready(self):
+        # Need to wait until the bot is running to get the Channel info
+        await self.bot.wait_until_ready()
+        self.update_channel = [c for c in self.bot.get_all_channels()
+                               if c.name == config('HOOK_UPDATE_CHANNEL')][0]
 
 
 @bot.event
 async def on_ready():
-    status = u'\N{musical note}\N{page with curl}  \N{eyes}'
+    status = u'\N{musical note}\N{page with curl}'
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
 
 
 bot.add_cog(BotManager(bot))
-bot.get_cog('BotManager').check_for_updates.start()
 bot.run(bot_token)

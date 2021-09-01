@@ -5,3 +5,5 @@ webhooks.
 
 Name inspiration from the lack of Spotify webhooks and [this song](https://open.spotify.com/track/4dyRm0qTslbvuwl3Bkeono).
 
+![Example of songs being removed from and added to the watched playlist, respectively](./example.png "Example of
+songs being removed from and added to the watched playlist, respectively")
