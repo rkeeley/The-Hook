@@ -2,20 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import discord
+import logging
 import random
 import spotipy
 
 from datetime import datetime
 from decouple import config, UndefinedValueError
 from discord.ext import commands, tasks
+from logging.handlers import RotatingFileHandler
 from os.path import exists as path_exists
 from spotipy.oauth2 import SpotifyOAuth
 
 
 bot_token = config('HOOK_BOT_TOKEN')
+bot_log_file = config('HOOK_LOG_FILE', default='the_hook.log', cast=str)
 bot_prefix = config('HOOK_BOT_PREFIX', default='.', cast=str)
+bot_check_interval = config('HOOK_CHECK_INTERVAL', default=20.0, cast=float)
 intents = discord.Intents.default()
 intents.presences = False
+
+logger = logging.getLogger('the_hook')
+logger.setLevel(logging.INFO)  # TODO: Parameterize
+log_handler = RotatingFileHandler(filename=bot_log_file, encoding='utf-8', mode='a')
+log_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
+logger.addHandler(log_handler)
 
 bot = commands.Bot(intents=intents, command_prefix=bot_prefix)
 
@@ -32,12 +42,12 @@ def get_playlist(pl_name: str) -> Playlist:
     p = sp.search(q=pl_name, type='playlist', limit=1)
     if not p:
         # TODO: Need to differentiate from the error below
-        print(f'Failed to get playlist "{pl_name}" from Spotify')
+        logger.warning(f'Failed to get playlist "{pl_name}" from Spotify')
         return None
 
     p = p['playlists']['items'][0]
     if not p:  # TODO: Is this even possible? I feel like it would be [] if anything, not [*]
-        print(f'No playlist data returned from Spotify for {pl_name}')
+        logger.warning(f'No playlist data returned from Spotify for {pl_name}')
         return None
 
     return Playlist(p)
@@ -170,7 +180,7 @@ class Playlist():
         return (self_tracks, other_tracks)
 
 
-class BotManager(commands.Cog):
+class HookBot(commands.Cog):
     """Manages Bot configuration data and commands.
 
     :attr bot: Bot instance for this script
@@ -205,9 +215,10 @@ class BotManager(commands.Cog):
         try:
             self.snap_id_fname = config('HOOK_SNAPSHOT_ID_FILE', cast=str)
         except UndefinedValueError:
-            print(f'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using {self.snap_id_fname} instead.')
+            logger.warning(f'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using {self.snap_id_fname} instead.')
 
         if not self._set_playlist():
+            logger.critical(f'Failed to get the "{self.pl_name}" playlist from Spotify.')
             raise Exception('Failed to get playlist from Spotify')  # TODO: Better exception
 
         # TODO: Replace with a load_snap_id() function or something
@@ -250,18 +261,18 @@ class BotManager(commands.Cog):
 
         if not self.snap_id:
             # First time running this script or using this snapshot id file. Save the id and return
-            print(f'Saving snapshot id to {self.snap_id_fname} - new file or first run')
+            logger.info(f'Saving snapshot id to {self.snap_id_fname} - new file or first run')
             self._save_snapshot_id()
             return True
 
         # FIXME: The snapshot id comparison needs to happen after the playlist is retrieved
         if self.snap_id != self.pl.snapshot_id:
-            print('Snap ids do not match')
+            logger.info('_update_snapshot_id: Snap ids do not match')
             self.snap_id = self.pl.snapshot_id
             self._save_snapshot_id()
             return True
 
-        print('No difference in snapshot ids. Log this or something')
+        logger.info('_update_snapshot_id: No difference in snapshot ids.')
         return False
 
     def _embed_from_track(self, track: Track, new=True, pl_name=None) -> discord.embeds.Embed:
@@ -324,14 +335,14 @@ class BotManager(commands.Cog):
         breakpoint()
         print('Entered pdb')
 
-    @tasks.loop(minutes=1.0)
+    @tasks.loop(minutes=bot_check_interval)
     async def check_for_updates(self):
         """Check for and notify about playlist updates once every 20 minutes."""
+        logger.info(f'Checking for updates to {self.pl_name}')
         p = get_playlist(self.pl_name)
         if p.snapshot_id != self.snap_id:
             # Snapshot ids differ. Need to send updates and then save the new pl
-            # FIXME: For some reason the updated tracks aren't being returned here :\
-            print('check_for_updates: snapshot ids differ')
+            logger.info('check_for_updates: snapshot ids differ')
 
             removed_tracks, new_tracks = self.pl.get_differences(p)
             for t in removed_tracks:
@@ -358,5 +369,7 @@ async def on_ready():
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
 
 
-bot.add_cog(BotManager(bot))
+bot.add_cog(HookBot(bot))
+# TODO: settings() function to return the most important class attributes, + something to Embed them
+logger.info(f'Starting bot with prefix "{bot_prefix}" and check interval {bot_check_interval}')
 bot.run(bot_token)
