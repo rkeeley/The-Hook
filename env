@@ -1,0 +1,27 @@
+#
+# Example .env file with all variables used by the script and their defaults, if available.
+#
+# All variables with (Required) comments must be set for the bot to run.
+#
+
+# Discord application token for your bot instance. (Required)
+export HOOK_BOT_TOKEN="string"
+
+# Name of the Spotify playlist to be watched. (Required)
+export HOOK_PLAYLIST_NAME="string"
+
+# Name of the Channel in the Discord server into which your bot will post updates. (Required)
+export HOOK_UPDATE_CHANNEL="string"
+
+# Time between playlist checks
+export HOOK_CHECK_INTERVAL=20.0
+
+# Name of the bot's log file
+export HOOK_LOG_FILE="the_hook.log"
+
+# Prefix for Discord commands; the bot will not respond unless a message begins with this character
+export HOOK_BOT_PREFIX="."
+
+# Name of the file to which the playlist snapshot ID is saved, to keep track of playlist updates.
+# This will most likely go away when a database is implemented.
+export HOOK_SNAPSHOT_ID_FILE="snapshot-id.txt"
