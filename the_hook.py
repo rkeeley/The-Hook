@@ -37,7 +37,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=['playlist-read-private']))
 def get_playlist(pl_name: str) -> Playlist:
     """Get the playlist called :param pl_name: and return it as a Playlist object.
 
-    :returns: A Playlist object for the playlist called `pl_name`, or None if one can't be found
+    :returns: A Playlist object for the playlist called :param pl_name:, or None if one can't be found
     """
     p = sp.search(q=pl_name, type='playlist', limit=1)
     if not p:
@@ -115,7 +115,7 @@ class Track():
         return self.track['id']
 
     @property
-    def artists(self):  # TODO: -> [dict] ?
+    def artists(self) -> [dict]:
         """The Track's 'artists' data"""
         return self.track['artists']
 
@@ -125,7 +125,7 @@ class Track():
         return self.track['name']
 
     @property
-    def album(self) -> str:
+    def album(self) -> [dict]:
         """The Track's 'album' data"""
         return self.track['album']
 
@@ -143,6 +143,7 @@ class Playlist():
     This class uniformly stores track information regardless of the API source.
     """
 
+    # TODO: Add a way to make this given the pl name instead of needing to use a separate function?
     def __init__(self, pl: dict):
         self.data = pl
         self.tracks = get_playlist_tracks(pl['id'])
@@ -150,7 +151,7 @@ class Playlist():
     @property
     def id(self) -> str:
         """Return the Playlist's 'id' data"""
-        # Consider changing this to `plid` or `pid` instead
+        # Consider changing this to `plid` or `pid` instead to avoid class confusion?
         return self.data['id']
 
     @property
@@ -220,7 +221,8 @@ class HookBot(commands.Cog):
             logger.critical(f'Failed to get the "{self.pl_name}" playlist from Spotify.')
             raise Exception('Failed to get playlist from Spotify')
 
-        # Load or set up the snapshot_id for the watched Playlist
+        # Set :attr snap_id: to the known snapshot_id, or create the :attr snap_id_fname: file if it
+        # doesn't exist/this is the first run
         if not self._load_snapshot_id():
             self._update_snapshot_id()
 
@@ -274,7 +276,6 @@ class HookBot(commands.Cog):
             self._save_snapshot_id()
             return True
 
-        # FIXME: The snapshot id comparison needs to happen after the playlist is retrieved
         if self.snap_id != self.pl.snapshot_id:
             logger.info('_update_snapshot_id: Snap ids do not match')
             self.snap_id = self.pl.snapshot_id
@@ -334,9 +335,9 @@ class HookBot(commands.Cog):
 
     @commands.command(name='check')
     async def check(self, ctx):
-        await ctx.send('Checking for updates...')
+        msg = await ctx.send('Checking for updates...')
         await self.check_for_updates()
-        # TODO: React with something on the original message to show that the check is complete
+        await msg.add_reaction('\N{WHITE HEAVY CHECK MARK}')
 
     @commands.command(name='pdb', hidden=True)
     async def pdb(self, ctx):
@@ -349,6 +350,9 @@ class HookBot(commands.Cog):
         """Check for and notify about playlist updates once every 20 minutes."""
         logger.info(f'Checking for updates to {self.pl_name}')
         p = get_playlist(self.pl_name)
+        # FIXME: This doesn't report new/removed tracks on initialization because I can't get a
+        #        specific snapshot of a playlist. There's currently no serialization or storage of
+        #        Tracks across program runs, so I have no way to relay the differences.
         if p.snapshot_id != self.snap_id:
             # Snapshot ids differ. Need to send updates and then save the new pl
             logger.info('check_for_updates: snapshot ids differ')
@@ -360,7 +364,6 @@ class HookBot(commands.Cog):
             for t in new_tracks:
                 await self.update_channel.send(embed=self._embed_from_track(t))
 
-            # FIXME: self.pl is updated, but not self.pl.tracks?
             self.pl = p
             self._update_snapshot_id()
 
