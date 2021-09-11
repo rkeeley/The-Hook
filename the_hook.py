@@ -74,7 +74,7 @@ def get_playlist_tracks(pl_id: str) -> [Track]:
 
 
 def get_tracks_from_playlist_name(pl_name: str) -> [dict]:
-    return get_playlist_tracks(get_playlist(pl_name).ID)
+    return get_playlist_tracks(get_playlist(pl_name).id)
 
 
 def artists_and_title_list(tracks: [Track], limit: int = None) -> [str]:
@@ -105,28 +105,28 @@ class Track():
 
     @property
     def track(self) -> dict:
-        """Return the Track's 'track' data"""
+        """The Track's 'track' data"""
         return self.raw['track']
 
     @property
-    def ID(self) -> str:
-        """Returns the Track's 'id' data"""
-        # TODO: Consider changing this to `tid` instead
+    def id(self) -> str:
+        """The Track's 'id' data"""
+        # Consider changing this to `tid` instead
         return self.track['id']
 
     @property
     def artists(self):  # TODO: -> [dict] ?
-        """Return the Track's 'artists' data"""
+        """The Track's 'artists' data"""
         return self.track['artists']
 
     @property
     def name(self) -> str:
-        """Return the Track's 'name' data"""
+        """The Track's 'name' data"""
         return self.track['name']
 
     @property
     def album(self) -> str:
-        """Return the Track's 'album' data"""
+        """The Track's 'album' data"""
         return self.track['album']
 
 
@@ -148,33 +148,32 @@ class Playlist():
         self.tracks = get_playlist_tracks(pl['id'])
 
     @property
-    def ID(self) -> str:
+    def id(self) -> str:
         """Return the Playlist's 'id' data"""
-        # TODO: Consider changing this to `plid` or `pid` instead
+        # Consider changing this to `plid` or `pid` instead
         return self.data['id']
 
     @property
     def snapshot_id(self) -> str:
         """Return the Playlist's 'snapshot_id' data"""
-        # TODO: Consider adding a `sid` alias for this
         return self.data['snapshot_id']
 
     def artists_and_title_list(self, limit: int = None) -> [str]:
         return artists_and_title_list(self.tracks, limit)
 
     def get_differences(self, other_pl: Playlist) -> ([Track], [Track]):
-        """Compare this Playlist's Tracks to `other_pl`'s Tracks and return the differences.
+        """Compare this Playlist's Tracks to :param other_pl:'s Tracks and return the differences.
 
         :param other_pl: Another Playlist object with Tracks to compare.
                          Can be the same Playlist with a different Snapshot id.
         :type other_pl: Playlist
-        :returns: A tuple with Lists of unique Tracks from this playlist and `other_pl`, respectively
+        :returns: A tuple with Lists of unique Tracks from this playlist and :param other_pl:, respectively
         """
         # Runtime complexity can absolutely be improved here
-        self_td = {t.ID: t for t in self.tracks}
-        other_tracks = [t for t in other_pl.tracks if t.ID not in self_td]
+        self_td = {t.id: t for t in self.tracks}
+        other_tracks = [t for t in other_pl.tracks if t.id not in self_td]
 
-        other_td = {t.ID: t for t in other_pl.tracks}
+        other_td = {t.id: t for t in other_pl.tracks}
         self_tracks = [self_td[tid] for tid in self_td if tid not in other_td]
 
         return (self_tracks, other_tracks)
@@ -219,13 +218,10 @@ class HookBot(commands.Cog):
 
         if not self._set_playlist():
             logger.critical(f'Failed to get the "{self.pl_name}" playlist from Spotify.')
-            raise Exception('Failed to get playlist from Spotify')  # TODO: Better exception
+            raise Exception('Failed to get playlist from Spotify')
 
-        # TODO: Replace with a load_snap_id() function or something
-        if path_exists(self.snap_id_fname):
-            with open(self.snap_id_fname, 'r') as f:
-                self.snap_id = f.read()
-        else:
+        # Load or set up the snapshot_id for the watched Playlist
+        if not self._load_snapshot_id():
             self._update_snapshot_id()
 
         self.check_for_updates.start()
@@ -243,17 +239,30 @@ class HookBot(commands.Cog):
         self.pl = p
         return True
 
+    def _load_snapshot_id(self):
+        """Sets :attr self.snap_id: to the watched Playlist's snapshot_id.
+
+        :returns: True if the snapshot_id was updated; False otherwise
+        :rtype bool:
+        """
+        if path_exists(self.snap_id_fname):
+            with open(self.snap_id_fname, 'r') as f:
+                self.snap_id = f.read()
+                return True
+
+        return False
+
     def _save_snapshot_id(self):
         with open(self.snap_id_fname, 'w') as f:
             f.write(self.pl.snapshot_id)
 
     def _update_snapshot_id(self) -> bool:
-        """Compare self.snap_id to the snapshot id of self.pl and update self.snap_id if needed.
+        """Compare :attr snap_id: to the snapshot id of :attr pl: and update :attr snap_id: if needed.
 
         This will also save the snap_id to the file, but that might need to change when a database
         is added.
 
-        This does not affect the pl attribute or any attribute besides snap_id.
+        This does not affect the :attr pl: attribute or any attribute besides :attr snap_id:.
 
         :returns: True if the snapshot id is new; False otherwise
         :rtype bool:
@@ -276,11 +285,12 @@ class HookBot(commands.Cog):
         return False
 
     def _embed_from_track(self, track: Track, new=True, pl_name=None) -> discord.embeds.Embed:
-        """Testing embeds
+        """Creates a formatted Embed object using :param track: data for a single Discord message.
 
-        :param track: Spotify Track dict for the embedded song. Not just the ['track'] part.
-        :type track: dict (Track object)
-        :param new: Whether this embed is about a newly-added Track or a removed one
+        :param track: Track object for the song to be embedded
+        :type track: Track
+        :param new: Whether this embed is for a newly-added Track or a removed one
+            Embeds for added (new) and removed (not new) tracks contain different information.
         :type new: bool, optional
         """
         # TODO: There are two API calls in this function. See if they can be made redundant
@@ -308,15 +318,14 @@ class HookBot(commands.Cog):
 
         if new:
             e.add_field(
-                name='Potential Genres',
+                name='Artist Genres',
                 value=' • '.join(random.sample(genres, min(4, len(genres)))),
             )
 
         return e
 
     @commands.command(name='embed')
-    async def embed_test(self, ctx):
-        # TODO: Testing with one track for now, but this needs to be expanded
+    async def embed_first_track(self, ctx):
         await ctx.send(embed=self._embed_from_track(self.pl.tracks[0]))
 
     @commands.command(name='playlist', aliases=['pl'])
