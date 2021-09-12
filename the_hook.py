@@ -18,8 +18,7 @@ bot_token = config('HOOK_BOT_TOKEN')
 bot_log_file = config('HOOK_LOG_FILE', default='the_hook.log', cast=str)
 bot_prefix = config('HOOK_BOT_PREFIX', default='.', cast=str)
 bot_check_interval = config('HOOK_CHECK_INTERVAL', default=20.0, cast=float)
-intents = discord.Intents.default()
-intents.presences = False
+DEBUG = config('HOOK_DEBUG', default=False, cast=bool)
 
 logger = logging.getLogger('the_hook')
 logger.setLevel(logging.INFO)  # TODO: Parameterize
@@ -27,6 +26,8 @@ log_handler = RotatingFileHandler(filename=bot_log_file, encoding='utf-8', mode=
 log_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s:%(name)s: %(message)s'))
 logger.addHandler(log_handler)
 
+intents = discord.Intents.default()
+intents.presences = False
 bot = commands.Bot(intents=intents, command_prefix=bot_prefix)
 
 # FIXME: This needs to be tied to individual users eventually if this script is to become a real
@@ -41,13 +42,13 @@ def get_playlist(pl_name: str) -> Playlist:
     """
     p = sp.search(q=pl_name, type='playlist', limit=1)
     if not p:
-        # TODO: Need to differentiate from the error below
-        logger.warning(f'Failed to get playlist "{pl_name}" from Spotify')
+        logger.critical(f'Spotify search for playlist "{pl_name}" failed')
         return None
 
-    p = p['playlists']['items'][0]
-    if not p:  # TODO: Is this even possible? I feel like it would be [] if anything, not [*]
-        logger.warning(f'No playlist data returned from Spotify for {pl_name}')
+    try:
+        p = p['playlists']['items'][0]
+    except IndexError:
+        logger.critical(f'No playlist data returned from Spotify for "{pl_name}"')
         return None
 
     return Playlist(p)
@@ -317,7 +318,7 @@ class HookBot(commands.Cog):
             icon_url=sp.user(track.raw['added_by']['id'])['images'][0]['url'] if new else discord.Embed.Empty,
         )
 
-        if new:
+        if new and genres:
             e.add_field(
                 name='Artist Genres',
                 value=' • '.join(random.sample(genres, min(4, len(genres)))),
@@ -339,11 +340,11 @@ class HookBot(commands.Cog):
         await self.check_for_updates()
         await msg.add_reaction('\N{WHITE HEAVY CHECK MARK}')
 
-    @commands.command(name='pdb', hidden=True)
+    @commands.command(name='pdb', hidden=True, enabled=DEBUG)
     async def pdb(self, ctx):
         """Drop the process running the bot into pdb"""
         breakpoint()
-        print('Entered pdb')
+        logger.info('Entered pdb')
 
     @tasks.loop(minutes=bot_check_interval)
     async def check_for_updates(self):

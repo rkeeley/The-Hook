@@ -4,16 +4,25 @@
 # All variables with (Required) comments must be set for the bot to run.
 #
 
-# Discord application token for your bot instance. (Required)
+# Spotify (spotipy) Developer App id, secret, and URI. All are required.
+# (Required)
+export SPOTIPY_CLIENT_ID="string"
+export SPOTIPY_CLIENT_SECRET="string"
+export SPOTIPY_REDIRECT_URI='http://localhost:8080'
+
+# Discord application token for your bot instance.
+# (Required)
 export HOOK_BOT_TOKEN="string"
 
-# Name of the Spotify playlist to be watched. (Required)
+# Name of the Spotify playlist to be watched.
+# (Required)
 export HOOK_PLAYLIST_NAME="string"
 
-# Name of the Channel in the Discord server into which your bot will post updates. (Required)
+# Name of the Channel in the Discord server into which your bot will post updates.
+# (Required)
 export HOOK_UPDATE_CHANNEL="string"
 
-# Time between playlist checks
+# Time between playlist checks, in minutes
 export HOOK_CHECK_INTERVAL=20.0
 
 # Name of the bot's log file
@@ -25,3 +34,6 @@ export HOOK_BOT_PREFIX="."
 # Name of the file to which the playlist snapshot ID is saved, to keep track of playlist updates.
 # This will most likely go away when a database is implemented.
 export HOOK_SNAPSHOT_ID_FILE="snapshot-id.txt"
+
+# True to enable the 'pdb' command; False otherwise. Non-bool values will raise an exception in the program.
+export HOOK_DEBUG=bool
