@@ -32,7 +32,12 @@ bot = commands.Bot(intents=intents, command_prefix=bot_prefix)
 
 # FIXME: This needs to be tied to individual users eventually if this script is to become a real
 #        bot. It's global for now because only my account is used and the code is simpler this way.
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=['playlist-read-private']))
+sp = spotipy.Spotify(
+    auth_manager=SpotifyOAuth(
+        scope=['playlist-read-private'],
+        open_browser=not config('HOOK_HEADLESS', default=False, cast=bool)
+    )
+)
 
 
 def get_playlist(pl_name: str) -> Playlist:

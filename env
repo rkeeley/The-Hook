@@ -37,3 +37,11 @@ export HOOK_SNAPSHOT_ID_FILE="snapshot-id.txt"
 
 # True to enable the 'pdb' command; False otherwise. Non-bool values will raise an exception in the program.
 export HOOK_DEBUG=bool
+
+# True if this script will be run on a machine without a web browser such as a Raspberry Pi.
+# Note that you will still need to be able to access the console on the machine. The normal spotipy behavior for
+# OAuth token collection is to open a web browser to the SPOTIPY_REDIRECT_URI URL to ask for credentials, then to
+# collect the OAuth token from the redirected URL. The request URL can instead be printed to the console, allowing
+# you to copy it into a browser yourself to get the redirected URL. Paste that URL back into the console to allow
+# spotipy to access your music.
+export HOOK_HEADLESS=False
