@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import asyncio
-import discord
 import logging
 import random
-import spotipy
 
 from datetime import datetime
-from decouple import config, UndefinedValueError
-from discord.ext import commands, tasks
 from logging.handlers import RotatingFileHandler
 from os.path import exists as path_exists
+
+import discord
+import spotipy
+
+from decouple import config, UndefinedValueError
+from discord.ext import commands, tasks
 from spotipy.oauth2 import SpotifyOAuth
 
 
@@ -35,25 +36,6 @@ bot = commands.Bot(intents=intents, command_prefix=bot_prefix)
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=['playlist-read-private']))
 
 
-def get_playlist(pl_name: str) -> Playlist:
-    """Get the playlist called :param pl_name: and return it as a Playlist object.
-
-    :returns: A Playlist object for the playlist called :param pl_name:, or None if one can't be found
-    """
-    p = sp.search(q=pl_name, type='playlist', limit=1)
-    if not p:
-        logger.critical(f'Spotify search for playlist "{pl_name}" failed')
-        return None
-
-    try:
-        p = p['playlists']['items'][0]
-    except IndexError:
-        logger.critical(f'No playlist data returned from Spotify for "{pl_name}"')
-        return None
-
-    return Playlist(p)
-
-
 def get_playlist_tracks(pl_id: str) -> [Track]:
     """Return a list of all the Tracks in the playlist with id :param pl_id:
 
@@ -74,8 +56,8 @@ def get_playlist_tracks(pl_id: str) -> [Track]:
     return tracks
 
 
-def get_tracks_from_playlist_name(pl_name: str) -> [dict]:
-    return get_playlist_tracks(get_playlist(pl_name).id)
+def get_tracks_from_playlist_name(pl_name: str) -> [Track]:
+    return get_playlist_tracks(Playlist.from_name(pl_name).id)
 
 
 def artists_and_title_list(tracks: [Track], limit: int = None) -> [str]:
@@ -85,21 +67,22 @@ def artists_and_title_list(tracks: [Track], limit: int = None) -> [str]:
     :type tracks: [Track]
     :param limit: Maximum number of strings to return
     :type limit: int, optional
-    :returns: List of '<artist name(s)> - <title>' strings for Tracks in the input :param track_list:
+    :returns: List of '<artist name(s)> - <title>' strings for Tracks in :param track_list:
     """
     lst = []
-    for n, t in enumerate([tr.track for tr in tracks]):
-        if limit and n >= limit:
+    # TODO: Too many tr*k? variable names in this scope
+    for number, trk in enumerate([tr.track for tr in tracks]):
+        if limit and number >= limit:
             break
 
         # ', '-separated list of artist names, minus the ending ', ', plus ' - ' and Track name
-        lst.append(''.join([f'{a["name"]}, ' for a in t.artists])[:-2] + f' - {t.name}')
+        lst.append(''.join([f'{a["name"]}, ' for a in trk.artists])[:-2] + f' - {trk.name}')
 
     return lst
 
 
 class Track():
-    """Container for Spotify Track objects to reduce the amount of identical sub-dict code around."""
+    """Container for Spotify Track objects to reduce the amount of identical sub-dict code around"""
 
     def __init__(self, track: dict):
         self.raw = track
@@ -149,6 +132,42 @@ class Playlist():
         self.data = pl
         self.tracks = get_playlist_tracks(pl['id'])
 
+    @staticmethod
+    def _playlist_from_search(name: str) -> dict:
+        """Return the dict with the playlist data from a search endpoint response"""
+        playlist = sp.search(q=f'"{name}"', type='playlist', limit=1)
+        if not playlist:
+            logger.critical('Spotify search for playlist "%s" failed', name)
+            raise KeyError(f'Spotify search for playlist "{name}" failed')
+
+        try:
+            playlist = playlist['playlists']['items'][0]
+        except IndexError:
+            logger.critical('No playlist data returned from Spotify for "%s"', name)
+            raise KeyError(f'Could not find a playlist called "{name}".') from None
+
+        return playlist
+
+    @classmethod
+    def from_name(cls, name: str) -> Playlist:
+        """Search for a playlist called :param name: and return a Playlist object for it.
+
+        A substring match will be used to search for :param name: because of how the Spotify API
+        works. An input of "roadhouse blues" can return a playlist called "my roadhouse blues," but
+        not one called "roadhouse of the blues."
+        """
+        return Playlist(cls._playlist_from_search(name))
+
+    @classmethod
+    def from_id(cls, plid: str) -> Playlist:
+        """Get the playlist with id :param plid: and return a Playlist object for it."""
+        playlist = sp.playlist(plid)
+        if not playlist:
+            logger.critical('Spotify search for playlist with id %s failed', plid)
+            raise KeyError(f'Could not find a playlist with id "{plid}"')
+
+        return Playlist(playlist)
+
     @property
     def id(self) -> str:
         """Return the Playlist's 'id' data"""
@@ -169,7 +188,7 @@ class Playlist():
         :param other_pl: Another Playlist object with Tracks to compare.
                          Can be the same Playlist with a different Snapshot id.
         :type other_pl: Playlist
-        :returns: A tuple with Lists of unique Tracks from this playlist and :param other_pl:, respectively
+        :returns: A tuple with unique Tracks from (self.playlist, other_pl)
         """
         # Runtime complexity can absolutely be improved here
         self_td = {t.id: t for t in self.tracks}
@@ -207,19 +226,21 @@ class HookBot(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.pl_name = config('HOOK_PLAYLIST_NAME', cast=str)
-        self.pl = None
+        self.pl_name: str = config('HOOK_PLAYLIST_NAME', cast=str)
+        self.pl: Playlist = None
         self.update_channel = None
-        self.snap_id_fname = 'snapshot-id.txt'
-        self.snap_id = ''
+        self.snap_id_fname: str = 'snapshot-id.txt'
+        self.snap_id: str = ''
 
         try:
             self.snap_id_fname = config('HOOK_SNAPSHOT_ID_FILE', cast=str)
         except UndefinedValueError:
-            logger.warning(f'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using {self.snap_id_fname} instead.')
+            logger.warning(
+                'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using "%s".',
+                self.snap_id_fname)
 
         if not self._set_playlist():
-            logger.critical(f'Failed to get the "{self.pl_name}" playlist from Spotify.')
+            logger.critical('Failed to get the "%s" playlist from Spotify.', self.pl_name)
             raise Exception('Failed to get playlist from Spotify')
 
         # Set :attr snap_id: to the known snapshot_id, or create the :attr snap_id_fname: file if it
@@ -229,17 +250,37 @@ class HookBot(commands.Cog):
 
         self.check_for_updates.start()
 
-    def _set_playlist(self) -> bool:
+    def _get_playlist(self) -> Playlist:
+        """Get a Playlist object using self.pl.id if available and self.pl_name otherwise."""
+        try:
+            if self.pl and self.pl.id:
+                playlist = Playlist.from_id(self.pl.id)
+            else:
+                playlist = Playlist.from_name(self.pl_name)
+        except KeyError:
+            logger.critical('_get_playlist: Failed to get playlist from Spotify')
+            return None
+
+        return playlist
+
+    def _set_playlist(self, playlist: Playlist = None) -> bool:
         """Get the playlist from Spotify and set self.pl to it.
 
         :returns: True if successful, False otherwise
         :rtype bool:
         """
-        p = get_playlist(self.pl_name)
-        if not p:
+        if playlist:
+            self.pl = playlist
+            return True
+
+        # FIXME: I want to do something to confirm with the user that the correct playlist has been
+        #        found
+        playlist = self._get_playlist()
+        if not playlist:
+            logger.critical('_set_playlist: Failed to get playlist from Spotify')
             return False
 
-        self.pl = p
+        self.pl = playlist
         return True
 
     def _load_snapshot_id(self):
@@ -249,18 +290,18 @@ class HookBot(commands.Cog):
         :rtype bool:
         """
         if path_exists(self.snap_id_fname):
-            with open(self.snap_id_fname, 'r') as f:
+            with open(self.snap_id_fname, 'r', encoding='utf-8') as f:
                 self.snap_id = f.read()
                 return True
 
         return False
 
     def _save_snapshot_id(self):
-        with open(self.snap_id_fname, 'w') as f:
+        with open(self.snap_id_fname, 'w', encoding='utf-8') as f:
             f.write(self.pl.snapshot_id)
 
     def _update_snapshot_id(self) -> bool:
-        """Compare :attr snap_id: to the snapshot id of :attr pl: and update :attr snap_id: if needed.
+        """Compare :attr snap_id: to the snapshot id of :attr pl: and update the former if needed.
 
         This will also save the snap_id to the file, but that might need to change when a database
         is added.
@@ -273,7 +314,7 @@ class HookBot(commands.Cog):
 
         if not self.snap_id:
             # First time running this script or using this snapshot id file. Save the id and return
-            logger.info(f'Saving snapshot id to {self.snap_id_fname} - new file or first run')
+            logger.info('Saving snapshot id to %s - new file or first run', self.snap_id_fname)
             self._save_snapshot_id()
             return True
 
@@ -302,7 +343,7 @@ class HookBot(commands.Cog):
         genres = sp.artist(track.artists[0]['id'])['genres']
         pl_name = pl_name or self.pl_name
 
-        e = discord.embeds.Embed(
+        embed = discord.embeds.Embed(
             title=track.name,
             type='rich',
             description=f'{artists} • *{track.album["name"]}*',
@@ -313,18 +354,19 @@ class HookBot(commands.Cog):
             url=track.album['images'][0]['url'],
         ).set_author(
             # TODO: add "by {user}" (if new?) in case there's no pfp or it's not obvious who did it
-            name='Song {} "{}"'.format('added to' if new else 'removed from', pl_name),
+            name='Song {"added to" if new else "removed from"} "{pl_name}"',
             url=track.raw['track']['external_urls']['spotify'],
-            icon_url=sp.user(track.raw['added_by']['id'])['images'][0]['url'] if new else discord.Embed.Empty,
+            icon_url=sp.user((track.raw['added_by']['id'])['images'][0]['url'] if new
+                              else discord.Embed.Empty),
         )
 
         if new and genres:
-            e.add_field(
+            embed.add_field(
                 name='Artist Genres',
                 value=' • '.join(random.sample(genres, min(4, len(genres)))),
             )
 
-        return e
+        return embed
 
     @commands.command(name='embed')
     async def embed_first_track(self, ctx):
@@ -349,23 +391,23 @@ class HookBot(commands.Cog):
     @tasks.loop(minutes=bot_check_interval)
     async def check_for_updates(self):
         """Check for and notify about playlist updates once every 20 minutes."""
-        logger.info(f'Checking for updates to {self.pl_name}')
-        p = get_playlist(self.pl_name)
+        logger.info('Checking for updates to "%s"', self.pl_name)
+        playlist = self._get_playlist()
         # FIXME: This doesn't report new/removed tracks on initialization because I can't get a
         #        specific snapshot of a playlist. There's currently no serialization or storage of
         #        Tracks across program runs, so I have no way to relay the differences.
-        if p.snapshot_id != self.snap_id:
+        if playlist.snapshot_id != self.snap_id:
             # Snapshot ids differ. Need to send updates and then save the new pl
             logger.info('check_for_updates: snapshot ids differ')
 
-            removed_tracks, new_tracks = self.pl.get_differences(p)
-            for t in removed_tracks:
-                await self.update_channel.send(embed=self._embed_from_track(t, new=False))
+            removed_tracks, new_tracks = self.pl.get_differences(playlist)
+            for track in removed_tracks:
+                await self.update_channel.send(embed=self._embed_from_track(track, new=False))
 
-            for t in new_tracks:
-                await self.update_channel.send(embed=self._embed_from_track(t))
+            for track in new_tracks:
+                await self.update_channel.send(embed=self._embed_from_track(track))
 
-            self.pl = p
+            self._set_playlist(playlist)
             self._update_snapshot_id()
 
     @check_for_updates.before_loop
@@ -378,11 +420,12 @@ class HookBot(commands.Cog):
 
 @bot.event
 async def on_ready():
-    status = u'\N{musical note}\N{page with curl}'
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=status))
+    status = '\N{musical note}\N{page with curl}'
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching,
+                                                        name=status))
 
 
 bot.add_cog(HookBot(bot))
 # TODO: settings() function to return the most important class attributes, + something to Embed them
-logger.info(f'Starting bot with prefix "{bot_prefix}" and check interval {bot_check_interval}')
+logger.info('Starting bot with prefix "%s" and check interval %f', bot_prefix, bot_check_interval)
 bot.run(bot_token)
