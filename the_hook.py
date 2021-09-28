@@ -359,10 +359,10 @@ class HookBot(commands.Cog):
             url=track.album['images'][0]['url'],
         ).set_author(
             # TODO: add "by {user}" (if new?) in case there's no pfp or it's not obvious who did it
-            name='Song {"added to" if new else "removed from"} "{pl_name}"',
+            name=f'Song {"added to" if new else "removed from"} "{pl_name}"',
             url=track.raw['track']['external_urls']['spotify'],
-            icon_url=sp.user((track.raw['added_by']['id'])['images'][0]['url'] if new
-                              else discord.Embed.Empty),
+            icon_url=(discord.Embed.Empty if not new
+                      else sp.user(track.raw['added_by']['id'])['images'][0]['url']),
         )
 
         if new and genres:
