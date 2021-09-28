@@ -383,8 +383,10 @@ class HookBot(commands.Cog):
 
     @commands.command(name='check')
     async def check(self, ctx):
-        msg = await ctx.send('Checking for updates...')
-        await self.check_for_updates()
+        async with ctx.typing():
+            msg = await ctx.send('Checking for updates...')
+            await self.check_for_updates()
+
         await msg.add_reaction('\N{WHITE HEAVY CHECK MARK}')
 
     @commands.command(name='pdb', hidden=True, enabled=DEBUG)
