@@ -373,15 +373,46 @@ class HookBot(commands.Cog):
 
         return embed
 
-    @commands.command(name='embed')
-    async def embed_first_track(self, ctx):
-        await ctx.send(embed=self._embed_from_track(self.pl.tracks[0]))
+    @commands.command(
+        name='embed',
+        brief='Post the most recent playlist addition to the update channel',
+        help="""Post the most recent playlist addition to the update channel.
 
-    @commands.command(name='playlist', aliases=['pl'])
+        <track_offset> is the offset into the list, not the position of the track in the list, i.e.
+        it starts at 0 and ends at (playlist length) - 1. If the input is not between
+        (-playlist_length) and (playlist_length - 1), or if nothing was input, the default of the
+        most recent playlist addition will be sent. Nothing will be posted if anything other than a
+        number is input.
+        """,
+    )
+    async def embed_track(self, ctx, track_offset: int =-1):
+        if track_offset < -len(self.pl.tracks) or track_offset >= len(self.pl.tracks):
+            track_offset = -1
+
+        await ctx.send(embed=self._embed_from_track(self.pl.tracks[track_offset]))
+
+    @commands.command(
+        name='playlist',
+        aliases=['pl'],
+        brief='Send the watched playlist link to the update channel',
+        help='Send the watched playlist link to the update channel.',
+    )
     async def playlist(self, ctx):
         await ctx.send(self.pl.data['external_urls']['spotify'])
 
-    @commands.command(name='check')
+    @commands.command(
+        name='check',
+        aliases=['c'],
+        brief='Check the watched playlist for updates',
+        help=f"""Check the watched playlist for updates.
+
+        Normally the bot checks for updates to the playlist every {bot_check_interval} minutes. This
+        command tells it to check for updates immediately.
+
+        The bot will send a message to the update channel before it starts its check. After the
+        check is complete it will react to that message with a green and white checkmark emote.
+        """,
+    )
     async def check(self, ctx):
         async with ctx.typing():
             msg = await ctx.send('Checking for updates...')
@@ -389,7 +420,12 @@ class HookBot(commands.Cog):
 
         await msg.add_reaction('\N{WHITE HEAVY CHECK MARK}')
 
-    @commands.command(name='pdb', hidden=True, enabled=DEBUG)
+    @commands.command(
+        name='pdb',
+        hidden=True,
+        enabled=DEBUG,
+        help='Drop the program into a pdb shell. This should only be enabled in debug deployments!',
+    )
     async def pdb(self, ctx):
         """Drop the process running the bot into pdb"""
         breakpoint()
