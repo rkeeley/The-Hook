@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import datetime
 import logging
 import random
 
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from os.path import exists as path_exists
+from typing import List, Optional, Union
 
 import discord
 import spotipy
+import spotify_objects as so
 
 from decouple import config, UndefinedValueError
 from discord.ext import commands, tasks
+# FIXME: I think this causes datetime to be re-imported, shadowing the one above :\
+#        Wildcard imports really can be dangerous. Welp
+from spotify_objects import *
 from spotipy.oauth2 import SpotifyOAuth
 
+
+# Colors for Embeds: Spotify green, or some red-ish analogoue of its purple-ish tetradic color
+DISC_COLOR_SPOTIFY_GREEN = discord.Color.from_rgb(30, 215, 96)
+DISC_COLOR_SPOTIFY_RED = discord.Color.from_rgb(186, 30, 53)
 
 bot_token = config('HOOK_BOT_TOKEN')
 bot_log_file = config('HOOK_LOG_FILE', default='the_hook.log', cast=str)
@@ -41,7 +50,7 @@ sp = spotipy.Spotify(
 )
 
 
-def get_playlist_tracks(pl_id: str) -> [Track]:
+def get_playlist_tracks(pl_id: str) -> List[Track]:
     """Return a list of all the Tracks in the playlist with id :param pl_id:
 
     :param pl_id: The 'id' attribute of the Playlist object
@@ -51,27 +60,21 @@ def get_playlist_tracks(pl_id: str) -> [Track]:
     limit = 100
     offset = 0
     track_obj = sp.playlist_tracks(pl_id, limit=limit, offset=offset)
-    tracks = [Track(t) for t in track_obj['items']]
+    tracks = [Track(**t) for t in track_obj['items']]
 
     while len(tracks) < track_obj['total']:
         offset += limit
         track_obj = sp.playlist_tracks(pl_id, limit=limit, offset=offset)
-        tracks.extend([Track(t) for t in track_obj['items']])
+        tracks.extend([Track(**t) for t in track_obj['items']])
 
     return tracks
 
 
-def get_tracks_from_playlist_name(pl_name: str) -> [Track]:
-    return get_playlist_tracks(Playlist.from_name(pl_name).id)
-
-
-def artists_and_title_list(tracks: [Track], limit: int = None) -> [str]:
+def artists_and_title_list(tracks: List[Track], limit: int = None) -> List[str]:
     """Return a list of strings corresponding to artist names and the track title
 
     :param tracks: List of Track objects
-    :type tracks: [Track]
     :param limit: Maximum number of strings to return
-    :type limit: int, optional
     :returns: List of '<artist name(s)> - <title>' strings for Tracks in :param track_list:
     """
     lst = []
@@ -86,123 +89,46 @@ def artists_and_title_list(tracks: [Track], limit: int = None) -> [str]:
     return lst
 
 
-class Track():
-    """Container for Spotify Track objects to reduce the amount of identical sub-dict code around"""
+def simplified_playlist_from_search(name: str) -> SimplifiedPlaylist:
+    """Return the dict with the SimplifiedPlaylist data from a search endpoint response.
 
-    def __init__(self, track: dict):
-        self.raw = track
-
-    @property
-    def track(self) -> dict:
-        """The Track's 'track' data"""
-        return self.raw['track']
-
-    @property
-    def id(self) -> str:
-        """The Track's 'id' data"""
-        # Consider changing this to `tid` instead
-        return self.track['id']
-
-    @property
-    def artists(self) -> [dict]:
-        """The Track's 'artists' data"""
-        return self.track['artists']
-
-    @property
-    def name(self) -> str:
-        """The Track's 'name' data"""
-        return self.track['name']
-
-    @property
-    def album(self) -> [dict]:
-        """The Track's 'album' data"""
-        return self.track['album']
-
-
-class Playlist():
-    """Standardized storage for Spotify PlaylistObjects and SimplifiedPlaylistObjects.
-
-    Right now this only handles the SimplifiedPlaylistObject returned in e.g. Search API responses,
-    but eventually it will handle full PlaylistObjects as well.
-
-    Without object IDs, the Search API is the easiest way to find playlists, tracks, etc. through
-    the Spotify API. Search API responses omit the full details of things like track listings for
-    playlists in order to save transmitted data, instead using URLs that can be queried to get the
-    full list. (This code doesn't actually use the URL, but it is in there instead of TrackObjects.)
-    This class uniformly stores track information regardless of the API source.
+    Note that this is the SimplifiedPlaylist, not the full Playlist data with full Track
+    information.
     """
+    # FIXME: Need to get the right variables in here
+    # FIXME: I'm not sure it's ever useful to have a SimplifiedPlaylist instead of a full Playlist
+    playlist = sp.search(q=f'"{name}"', type='playlist', limit=1)
+    if not playlist:
+        logger.critical('Spotify search for playlist "%s" failed', name)
+        raise KeyError(f'Spotify search for playlist "{name}" failed')
 
-    # TODO: Add a way to make this given the pl name instead of needing to use a separate function?
-    def __init__(self, pl: dict):
-        self.data = pl
-        self.tracks = get_playlist_tracks(pl['id'])
+    try:
+        playlist = playlist['playlists']['items'][0]
+    except IndexError:
+        logger.critical('No playlist data returned from Spotify for "%s"', name)
+        raise KeyError(f'Could not find a playlist called "{name}".') from None
 
-    @staticmethod
-    def _playlist_from_search(name: str) -> dict:
-        """Return the dict with the playlist data from a search endpoint response"""
-        playlist = sp.search(q=f'"{name}"', type='playlist', limit=1)
-        if not playlist:
-            logger.critical('Spotify search for playlist "%s" failed', name)
-            raise KeyError(f'Spotify search for playlist "{name}" failed')
+    return SimplifiedPlaylist(**playlist)
 
-        try:
-            playlist = playlist['playlists']['items'][0]
-        except IndexError:
-            logger.critical('No playlist data returned from Spotify for "%s"', name)
-            raise KeyError(f'Could not find a playlist called "{name}".') from None
 
-        return playlist
+def playlist_from_search(name: str) -> Playlist:
+    """Search for a playlist called :param name: and return it as a Playlist instance"""
+    # FIXME: This would essentially be the same function as simplified_playlist_from_search. It
+    #        feels weird to create the SimplifiedPlaylist object when I need to call sp.playlist
+    #        anyway. Need to see which is easier on memory and runtime.
+    simplified_pl = simplified_playlist_from_search(name)
+    return playlist_from_id(simplified_pl.id)
 
-    @classmethod
-    def from_name(cls, name: str) -> Playlist:
-        """Search for a playlist called :param name: and return a Playlist object for it.
 
-        A substring match will be used to search for :param name: because of how the Spotify API
-        works. An input of "roadhouse blues" can return a playlist called "my roadhouse blues," but
-        not one called "roadhouse of the blues."
-        """
-        return Playlist(cls._playlist_from_search(name))
+def playlist_from_id(plid: str) -> Playlist:
+    """Get the playlist with id :param plid: and return a Playlist object for it."""
+    # FIXME: Need to get the right variables in here
+    playlist = sp.playlist(plid)
+    if not playlist:
+        logger.critical('Spotify search for playlist with id %s failed', plid)
+        raise KeyError(f'Could not find a playlist with id "{plid}"')
 
-    @classmethod
-    def from_id(cls, plid: str) -> Playlist:
-        """Get the playlist with id :param plid: and return a Playlist object for it."""
-        playlist = sp.playlist(plid)
-        if not playlist:
-            logger.critical('Spotify search for playlist with id %s failed', plid)
-            raise KeyError(f'Could not find a playlist with id "{plid}"')
-
-        return Playlist(playlist)
-
-    @property
-    def id(self) -> str:
-        """Return the Playlist's 'id' data"""
-        # Consider changing this to `plid` or `pid` instead to avoid class confusion?
-        return self.data['id']
-
-    @property
-    def snapshot_id(self) -> str:
-        """Return the Playlist's 'snapshot_id' data"""
-        return self.data['snapshot_id']
-
-    def artists_and_title_list(self, limit: int = None) -> [str]:
-        return artists_and_title_list(self.tracks, limit)
-
-    def get_differences(self, other_pl: Playlist) -> ([Track], [Track]):
-        """Compare this Playlist's Tracks to :param other_pl:'s Tracks and return the differences.
-
-        :param other_pl: Another Playlist object with Tracks to compare.
-                         Can be the same Playlist with a different Snapshot id.
-        :type other_pl: Playlist
-        :returns: A tuple with unique Tracks from (self.playlist, other_pl)
-        """
-        # Runtime complexity can absolutely be improved here
-        self_td = {t.id: t for t in self.tracks}
-        other_tracks = [t for t in other_pl.tracks if t.id not in self_td]
-
-        other_td = {t.id: t for t in other_pl.tracks}
-        self_tracks = [self_td[tid] for tid in self_td if tid not in other_td]
-
-        return (self_tracks, other_tracks)
+    return Playlist(**playlist)
 
 
 class HookBot(commands.Cog):
@@ -259,9 +185,9 @@ class HookBot(commands.Cog):
         """Get a Playlist object using self.pl.id if available and self.pl_name otherwise."""
         try:
             if self.pl and self.pl.id:
-                playlist = Playlist.from_id(self.pl.id)
+                playlist = playlist_from_id(self.pl.id)
             else:
-                playlist = Playlist.from_name(self.pl_name)
+                playlist = playlist_from_search(self.pl_name)
         except KeyError:
             logger.critical('_get_playlist: Failed to get playlist from Spotify')
             return None
@@ -319,6 +245,8 @@ class HookBot(commands.Cog):
 
         if not self.snap_id:
             # First time running this script or using this snapshot id file. Save the id and return
+            # FIXME: Is `not self.snap_id` really true when it's a new file? I don't remember
+            #        setting that to None and the file existence isn't checked for here
             logger.info('Saving snapshot id to %s - new file or first run', self.snap_id_fname)
             self._save_snapshot_id()
             return True
@@ -332,39 +260,45 @@ class HookBot(commands.Cog):
         logger.info('_update_snapshot_id: No difference in snapshot ids.')
         return False
 
-    def _embed_from_track(self, track: Track, new=True, pl_name=None) -> discord.embeds.Embed:
+    def _embed_from_track(self, pl_track: PlaylistTrack, new=True,
+                          pl_name=None) -> discord.embeds.Embed:
         """Creates a formatted Embed object using :param track: data for a single Discord message.
 
-        :param track: Track object for the song to be embedded
-        :type track: Track
+        This function expects a PlaylistTrack because the embed information contains data about who
+        added the song to the playlist, and when they did. It will not work with other Track-related
+        classes.
+
+        :param pl_track: PlaylistTrack object for the song to be embedded
         :param new: Whether this embed is for a newly-added Track or a removed one
             Embeds for added (new) and removed (not new) tracks contain different information.
-        :type new: bool, optional
+        :return: a discord.embeds.Embed object to be sent in a discord Messageable
         """
         # TODO: There are two API calls in this function. See if they can be made redundant
-        artists = ''.join([f'**{a["name"]}**, ' for a in track.artists])[:-2]
-        # Spotify green, or some red-ish analogoue of its purple-ish tetradic color
-        color = discord.Color.from_rgb(30, 215, 96) if new else discord.Color.from_rgb(186, 30, 53)
-        genres = sp.artist(track.artists[0]['id'])['genres']
+
+        artists = ''.join([f'**{a["name"]}**, ' for a in pl_track.track.artists])[:-2]
+        color = DISC_COLOR_SPOTIFY_GREEN if new else DISC_COLOR_SPOTIFY_RED
+        genres = sp.artist(pl_track.track.artists[0]['id'])['genres']
         pl_name = pl_name or self.pl_name
 
         embed = discord.embeds.Embed(
-            title=track.name,
+            title=pl_track.track.name,
             type='rich',
-            description=f'{artists} • *{track.album["name"]}*',
-            url=track.album['external_urls']['spotify'],
-            timestamp=datetime.fromisoformat(track.raw['added_at'][:-1]),  # [:-1] to remove 'Z'ms
+            description=f'{artists} • *{pl_track.track.album["name"]}*',
+            url=pl_track.track.album['external_urls']['spotify'],
+            timestamp=datetime.datetime.fromisoformat(pl_track.added_at[:-1]),  # [:-1] for 'Z'ms
             color=color,
         ).set_thumbnail(
-            url=track.album['images'][0]['url'],
+            url=pl_track.track.album['images'][0]['url'],
         ).set_author(
             # TODO: add "by {user}" (if new?) in case there's no pfp or it's not obvious who did it
             name=f'Song {"added to" if new else "removed from"} "{pl_name}"',
-            url=track.raw['track']['external_urls']['spotify'],
+            url=pl_track.track.external_urls[0].spotify,
             icon_url=(discord.Embed.Empty if not new
-                      else sp.user(track.raw['added_by']['id'])['images'][0]['url']),
+                      else sp.user(pl_track.added_by.id)['images'][0]['url']),  # FIXME: *User class
         )
 
+        # TODO: I only random.sample this in case there are like 10 genres listed. It would be nice
+        #       to have them in the same order all the time when there are fewer than that.
         if new and genres:
             embed.add_field(
                 name='Artist Genres',
@@ -379,13 +313,19 @@ class HookBot(commands.Cog):
         help="""Post the most recent playlist addition to the update channel.
 
         <track_offset> is the offset into the list, not the position of the track in the list, i.e.
-        it starts at 0 and ends at (playlist length) - 1. If the input is not between
-        (-playlist_length) and (playlist_length - 1), or if nothing was input, the default of the
-        most recent playlist addition will be sent. Nothing will be posted if anything other than a
-        number is input.
+        it starts at 0 and ends at (playlist length) - 1.
+
+        If the input is not between (-playlist_length) and (playlist_length - 1), or if nothing
+        was input, the default of the most recent playlist addition will be sent.
+
+        Nothing will be posted if anything other than a number is input.
         """,
     )
-    async def embed_track(self, ctx, track_offset: int =-1):
+    async def embed_track(self, ctx, track_offset: int = -1):
+        if not self.pl.tracks:
+            await ctx.send('The playlist is empty.')  # TODO: better message
+            return
+
         if track_offset < -len(self.pl.tracks) or track_offset >= len(self.pl.tracks):
             track_offset = -1
 
@@ -398,7 +338,7 @@ class HookBot(commands.Cog):
         help='Send the watched playlist link to the update channel.',
     )
     async def playlist(self, ctx):
-        await ctx.send(self.pl.data['external_urls']['spotify'])
+        await ctx.send(self.pl.external_urls[0].spotify)
 
     @commands.command(
         name='check',
@@ -429,7 +369,7 @@ class HookBot(commands.Cog):
     async def pdb(self, ctx):
         """Drop the process running the bot into pdb"""
         breakpoint()
-        logger.info('Entered pdb')
+        logger.info(f'Entered pdb for "{ctx.author.name}#{ctx.author.discriminator}".')
 
     @tasks.loop(minutes=bot_check_interval)
     async def check_for_updates(self):
