@@ -301,7 +301,7 @@ class HookBot(commands.Cog):
         #       to have them in the same order all the time when there are fewer than that.
         if new and genres:
             embed.add_field(
-                name='Artist Genres',
+                name='Artist Genre(s)',
                 value=' • '.join(random.sample(genres, min(4, len(genres)))),
             )
 
@@ -309,25 +309,32 @@ class HookBot(commands.Cog):
 
     @commands.command(
         name='embed',
-        brief='Post the most recent playlist addition to the update channel',
-        help="""Post the most recent playlist addition to the update channel.
+        brief='Post a message with info for a specific track in the playlist',
+        help="""Post a message with info for a specific track in the playlist.
 
-        <track_offset> is the offset into the list, not the position of the track in the list, i.e.
-        it starts at 0 and ends at (playlist length) - 1.
+        <track_number> is the number of the track in the playlist, in the range [1, <playlist
+        length>]. Negative numbers can also be used, in the range [-<playlist length>, -1], to get
+        tracks from the end of the list first.
 
-        If the input is not between (-playlist_length) and (playlist_length - 1), or if nothing
+        If the input is not between -<playlist_length> and <playlist_length>, or if nothing
         was input, the default of the most recent playlist addition will be sent.
 
         Nothing will be posted if anything other than a number is input.
+
+        If the playlist is empty, a message will be sent saying so.
         """,
     )
     async def embed_track(self, ctx, track_offset: int = -1):
         if not self.pl.tracks:
-            await ctx.send('The playlist is empty.')  # TODO: better message
+            await ctx.send('The playlist is empty.')
             return
 
         if track_offset < -len(self.pl.tracks) or track_offset >= len(self.pl.tracks):
             track_offset = -1
+
+        if track_offset > 0:
+            # "Arrays start at 1" because normal people/users aren't programmers
+            track_offset -= 1
 
         await ctx.send(embed=self._embed_from_track(self.pl.tracks[track_offset]))
 
@@ -355,7 +362,7 @@ class HookBot(commands.Cog):
     )
     async def check(self, ctx):
         async with ctx.typing():
-            msg = await ctx.send('Checking for updates...')
+            msg = await ctx.send(f'Checking for updates to `{self.pl.name}`...')
             await self.check_for_updates()
 
         await msg.add_reaction('\N{WHITE HEAVY CHECK MARK}')
