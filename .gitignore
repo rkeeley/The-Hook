@@ -10,7 +10,7 @@ pip-log.txt
 *.log
 logs/**
 
-.env
+.env*
 .venv
 env/
 venv/

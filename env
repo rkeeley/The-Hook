@@ -1,7 +1,8 @@
-#
 # Example .env file with all variables used by the script and their defaults, if available.
+
+
 #
-# All variables with (Required) comments must be set for the bot to run.
+# Required variables: if these are not set, the bot will not run
 #
 
 # Spotify (spotipy) Developer App id, secret, and URI. All are required.
@@ -10,20 +11,28 @@ export SPOTIPY_CLIENT_ID="string"
 export SPOTIPY_CLIENT_SECRET="string"
 export SPOTIPY_REDIRECT_URI='http://localhost:8080'
 
-# Discord application token for your bot instance.
+# Discord application token for your bot instance
 # (Required)
 export HOOK_BOT_TOKEN="string"
 
-# Name of the Spotify playlist to be watched.
+# Name of the Spotify playlist to be watched
 # (Required)
 export HOOK_PLAYLIST_NAME="string"
 
-# Name of the Channel in the Discord server into which your bot will post updates.
+# Name of the Channel in the Discord server into which your bot will post updates
 # (Required)
 export HOOK_UPDATE_CHANNEL="string"
 
+
+#
+# Optional variables
+#
+
 # Time between playlist checks, in minutes
 export HOOK_CHECK_INTERVAL=20.0
+
+# Whether or not to post messages about song removals in the update channel
+export HOOK_REPORT_REMOVALS=bool
 
 # Name of the bot's log file
 export HOOK_LOG_FILE="the_hook.log"
@@ -31,11 +40,11 @@ export HOOK_LOG_FILE="the_hook.log"
 # Prefix for Discord commands; the bot will not respond unless a message begins with this character
 export HOOK_BOT_PREFIX="."
 
-# Name of the file to which the playlist snapshot ID is saved, to keep track of playlist updates.
-# This will most likely go away when a database is implemented.
+# Name of the file to which the playlist snapshot ID is saved, to keep track of playlist updates
+# This will most likely go away when a database is implemented
 export HOOK_SNAPSHOT_ID_FILE="snapshot-id.txt"
 
-# True to enable the 'pdb' command; False otherwise. Non-bool values will raise an exception in the program.
+# True to enable the 'pdb' command; False otherwise. Non-bool values will raise an exception in the program
 export HOOK_DEBUG=bool
 
 # True if this script will be run on a machine without a web browser such as a Raspberry Pi.
@@ -43,5 +52,5 @@ export HOOK_DEBUG=bool
 # OAuth token collection is to open a web browser to the SPOTIPY_REDIRECT_URI URL to ask for credentials, then to
 # collect the OAuth token from the redirected URL. The request URL can instead be printed to the console, allowing
 # you to copy it into a browser yourself to get the redirected URL. Paste that URL back into the console to allow
-# spotipy to access your music.
+# spotipy to access your music
 export HOOK_HEADLESS=False

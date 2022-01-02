@@ -20,6 +20,7 @@ bot_log_file = config('HOOK_LOG_FILE', default='the_hook.log', cast=str)
 bot_prefix = config('HOOK_BOT_PREFIX', default='.', cast=str)
 bot_check_interval = config('HOOK_CHECK_INTERVAL', default=20.0, cast=float)
 DEBUG = config('HOOK_DEBUG', default=False, cast=bool)
+REPORT_REMOVALS = config('HOOK_REPORT_REMOVALS', default=False, cast=bool)
 
 logger = logging.getLogger('the_hook')
 logger.setLevel(logging.INFO)  # TODO: Parameterize
@@ -436,16 +437,15 @@ class HookBot(commands.Cog):
         """Check for and notify about playlist updates once every 20 minutes."""
         logger.info('Checking for updates to "%s"', self.pl_name)
         playlist = self._get_playlist()
-        # FIXME: This doesn't report new/removed tracks on initialization because I can't get a
-        #        specific snapshot of a playlist. There's currently no serialization or storage of
-        #        Tracks across program runs, so I have no way to relay the differences.
+        # Note that this doesn't report changes made to the playlist while the bot wasn't running.
         if playlist.snapshot_id != self.snap_id:
             # Snapshot ids differ. Need to send updates and then save the new pl
             logger.info('check_for_updates: snapshot ids differ')
 
             removed_tracks, new_tracks = self.pl.get_differences(playlist)
-            for track in removed_tracks:
-                await self.update_channel.send(embed=self._embed_from_track(track, new=False))
+            if REPORT_REMOVALS:
+                for track in removed_tracks:
+                    await self.update_channel.send(embed=self._embed_from_track(track, new=False))
 
             for track in new_tracks:
                 await self.update_channel.send(embed=self._embed_from_track(track))
