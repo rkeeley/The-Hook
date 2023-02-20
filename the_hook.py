@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-import spotipy
-
-from decouple import config, UndefinedValueError
-from spotipy.oauth2 import SpotifyOAuth
+from decouple import config
 
 import hook_bot
 import hook_logging
 
-# FIXME: This needs to be tied to individual users eventually if this script is to become a real
-#        bot. It's global for now because only my account is used and the code is simpler this way.
-sp = spotipy.Spotify(
-    auth_manager=SpotifyOAuth(
-        scope=['playlist-read-private'],
-        open_browser=not config('HOOK_HEADLESS', default=False, cast=bool)
-    )
-)
+from spotipy_client import SpotipyClient
 
-bot_token = config('HOOK_BOT_TOKEN')
-bot = hook_bot.initialize_bot()
-logger = hook_logging._init_logger()
-logger.info('Starting bot with prefix "%s" and check interval %f', bot_prefix, bot_check_interval)
-bot.run(bot_token)
+
+if __name__ == '__main__':
+    bot_check_interval = config('HOOK_CHECK_INTERVAL', default=60.0, cast=float)
+    bot_prefix = config('HOOK_BOT_PREFIX', default='.', cast=str)
+    bot_token = config('HOOK_BOT_TOKEN')
+
+    spotipy_client = SpotipyClient()
+
+    bot = hook_bot.initialize_bot(
+        check_interval=bot_check_interval,
+        prefix=bot_prefix,
+        spotipy_client=spotipy_client)
+
+    logger = hook_logging._init_logger('The Hook')
+    logger.info('Starting bot with prefix "%s" and check interval %f', bot_prefix, bot_check_interval)
+
+    bot.run(bot_token)

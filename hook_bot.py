@@ -15,15 +15,16 @@ from pymongo import MongoClient
 import hook_logging
 
 from playlist import Playlist
+from spotipy_client import SpotipyClient
 from track import Track
 
 # TODO: mongodb credentials
 
-bot_prefix = config('HOOK_BOT_PREFIX', default='.', cast=str)
-bot_check_interval = config('HOOK_CHECK_INTERVAL', default=20.0, cast=float)
+# FIXME: can't use self in Command decorator docstrings. Need a way to have this
+#        global and per-class... try setting __docstring__ inside the method
+bot_check_interval = config('HOOK_CHECK_INTERVAL', cast=float)
 DEBUG = config('HOOK_DEBUG', default=False, cast=bool)
 REPORT_REMOVALS = config('HOOK_REPORT_REMOVALS', default=False, cast=bool)
-
 
 class HookBot(commands.Cog):
     """Manages Bot configuration data and commands.
@@ -49,14 +50,16 @@ class HookBot(commands.Cog):
     :type update_channel: discord.channel.TextChannel
     """
 
-    def __init__(self, bot):
+    def __init__(self, bot, check_interval: float, spotipy_client: SpotipyClient = None):
         self.bot = bot
         self.pl_name: str = config('HOOK_PLAYLIST_NAME', cast=str)
         self.pl: Playlist = None
         self.update_channel = None
         self.snap_id_fname: str = 'snapshot-id.txt'
         self.snap_id: str = ''
-        self.logger = hook_logging._init_logger()
+        self.logger = hook_logging._init_logger(__name__)
+        self.check_interval = check_interval
+        self.sp = spotipy_client or SpotipyClient()
 
         try:
             self.snap_id_fname = config('HOOK_SNAPSHOT_ID_FILE', cast=str)
@@ -64,8 +67,6 @@ class HookBot(commands.Cog):
             self.logger.warning(
                 'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using "%s".',
                 self.snap_id_fname)
-
-        self.logger.info('Past variable initialization')
 
         if not self._set_playlist():
             self.logger.critical('Failed to get the "%s" playlist from Spotify.', self.pl_name)
@@ -78,7 +79,7 @@ class HookBot(commands.Cog):
 
         self.check_for_updates.start()
 
-    @commands.Cog.listener
+    @commands.Cog.listener()
     async def on_ready(self):
         status = '\N{musical note}\N{page with curl}'
         await self.bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching,
@@ -89,9 +90,9 @@ class HookBot(commands.Cog):
         """Get a Playlist object using self.pl.id if available and self.pl_name otherwise."""
         try:
             if self.pl and self.pl.id:
-                playlist = Playlist.from_id(self.pl.id)
+                playlist = Playlist.from_id(self.sp, self.pl.id)
             else:
-                playlist = Playlist.from_name(self.pl_name)
+                playlist = Playlist.from_name(self.sp, self.pl_name)
         except KeyError:
             self.logger.critical('_get_playlist: Failed to get playlist from Spotify')
             return None
@@ -162,8 +163,7 @@ class HookBot(commands.Cog):
         self.logger.info('_update_snapshot_id: No difference in snapshot ids.')
         return False
 
-    # FIXME: sp input
-    def _embed_from_track(self, sp, track: Track, new=True, pl_name=None) \
+    def _embed_from_track(self, track: Track, new=True, pl_name=None) \
     -> discord.embeds.Embed:
         """Creates a formatted Embed object using :param track: data for a single Discord message.
 
@@ -177,7 +177,7 @@ class HookBot(commands.Cog):
         artists = ''.join([f'**{a["name"]}**, ' for a in track.artists])[:-2]
         # Spotify green, or some red-ish analogoue of its purple-ish tetradic color
         color = discord.Color.from_rgb(30, 215, 96) if new else discord.Color.from_rgb(186, 30, 53)
-        genres = sp.artist(track.artists[0]['id'])['genres']
+        genres = self.sp.client.artist(track.artists[0]['id'])['genres']
         pl_name = pl_name or self.pl_name
 
         embed = discord.embeds.Embed(
@@ -194,7 +194,7 @@ class HookBot(commands.Cog):
             name=f'Song {"added to" if new else "removed from"} "{pl_name}"',
             url=track.raw['track']['external_urls']['spotify'],
             icon_url=(discord.Embed.Empty if not new
-                      else sp.user(track.raw['added_by']['id'])['images'][0]['url']),
+                      else self.sp.client.user(track.raw['added_by']['id'])['images'][0]['url']),
         )
 
         if new and genres:
@@ -253,6 +253,32 @@ class HookBot(commands.Cog):
         await msg.add_reaction('\N{WHITE HEAVY CHECK MARK}')
 
     @commands.command(
+        name='set_check_interval',
+        brief='Set the time for which the bot will wait to check for playlist updates',
+    )
+    async def set_check_interval(self, ctx, check_interval: float):
+        if not check_interval:
+            await ctx.send('Must provide a check_interval value')
+            return
+
+        old_check_interval = self.check_interval
+        self.check_interval = check_interval
+        await ctx.send('Updated the check interval from %f to %f', old_check_interval, self.check_interval)
+
+    @commands.command(
+        name='set_prefix',
+        brief='Set the prefix for bot commands',
+    )
+    async def set_prefix(self, ctx, prefix: str):
+        if not prefix:
+            await ctx.send('Must provide a prefix')
+            return
+
+        old_prefix = self.bot.command_prefix
+        self.bot.command_prefix = prefix
+        await ctx.send('Updated the bot prefix from %s to %s', old_prefix, self.bot.command_prefix)
+
+    @commands.command(
         name='pdb',
         hidden=True,
         enabled=DEBUG,
@@ -292,11 +318,15 @@ class HookBot(commands.Cog):
                                if c.name == config('HOOK_UPDATE_CHANNEL')][0]
 
 
-def initialize_bot():
+def initialize_bot(check_interval: float, prefix: str,
+                   spotipy_client: SpotipyClient = None):
     intents = discord.Intents.default()
-    intents.presences = False
+    intents.message_content = True
 
-    bot = commands.Bot(intents=intents, command_prefix=bot_prefix)
-    bot.add_cog(HookBot(bot))
+    global bot_check_interval
+    bot_check_interval = check_interval
+
+    bot = commands.Bot(intents=intents, command_prefix=prefix)
+    bot.add_cog(HookBot(bot, check_interval, spotipy_client))
 
     return bot

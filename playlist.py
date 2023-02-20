@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from logging.handlers import RotatingFileHandler
 from typing import List, Tuple
 
-import spotipy
-
 import hook_logging
+
+from spotipy_client import SpotipyClient
 from track import Track
 
 
@@ -23,16 +22,17 @@ class Playlist():
     """
 
     # TODO: Add a way to make this given the pl name instead of needing to use a separate function?
-    def __init__(self, spotipy_session: spotipy.Spotify, pl: dict):
+    def __init__(self, spotipy_client: SpotipyClient, pl: dict):
         self.data = pl
-        self.sp = spotipy_session
+        self._spotipy_client = spotipy_client
+        self.sp = self._spotipy_client.client
         self.tracks = self.get_playlist_tracks(pl['id'])
-        self.logger = hook_logging._init_logger()
+        self.logger = hook_logging._init_logger(__name__)
 
     @staticmethod
-    def _playlist_from_search(spotify: spotipy.Spotify, name: str) -> dict:
+    def _playlist_from_search(spotipy_client: SpotipyClient, name: str) -> dict:
         """Return the dict with the playlist data from a search endpoint response"""
-        playlist = spotify.search(q=f'"{name}"', type='playlist', limit=1)
+        playlist = spotipy_client.client.search(q=f'"{name}"', type='playlist', limit=1)
         if not playlist:
             # logger.critical('Spotify search for playlist "%s" failed', name)
             raise KeyError(f'Spotify search for playlist "{name}" failed')
@@ -43,28 +43,27 @@ class Playlist():
             # logger.critical('No playlist data returned from Spotify for "%s"', name)
             raise KeyError(f'Could not find a playlist called "{name}".') from None
 
-        return playlist
+        return Playlist(spotipy_client, playlist)
 
     @classmethod
-    def from_name(cls, name: str) -> Playlist:
+    def from_name(cls, spotipy_client: SpotipyClient, name: str) -> Playlist:
         """Search for a playlist called :param name: and return a Playlist object for it.
 
         A substring match will be used to search for :param name: because of how the Spotify API
         works. An input of "roadhouse blues" can return a playlist called "my roadhouse blues," but
         not one called "roadhouse of the blues."
         """
-        return Playlist(cls._playlist_from_search(name))
+        return cls._playlist_from_search(spotipy_client, name)
 
-    # FIXME:
     @classmethod
-    def from_id(cls, spotify: spotipy.Spotify, plid: str) -> Playlist:
+    def from_id(cls, spotipy_client: SpotipyClient, plid: str) -> Playlist:
         """Get the playlist with id :param plid: and return a Playlist object for it."""
-        playlist = spotify.playlist(plid)
+        playlist = spotipy_client.client.playlist(plid)
         if not playlist:
             # logger.critical('Spotify search for playlist with id %s failed', plid)
             raise KeyError(f'Could not find a playlist with id "{plid}"')
 
-        return Playlist(playlist)
+        return Playlist(spotipy_client, playlist)
 
     @property
     def id(self) -> str:
@@ -99,7 +98,7 @@ class Playlist():
 
     # FIXME: what am doing with this
     def get_tracks_from_playlist_name(self, pl_name: str) -> List[Track]:
-        return self.get_playlist_tracks(Playlist.from_name(pl_name).id)
+        return self.get_playlist_tracks(Playlist.from_name(self._spotipy_client, pl_name).id)
 
     # FIXME: what am doing with this
     def artists_and_title_list(self, tracks: List[Track], limit: int = None) -> List[str]:

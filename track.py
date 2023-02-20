@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Dict
+from typing import List
 
 class Track():
     """Container for Spotify Track objects to reduce the amount of identical sub-dict code around"""
@@ -47,6 +47,6 @@ class Track():
         added_at = datetime.fromisoformat(no_tz(self.raw['added_at']))
         self.raw['added_at'] = added_at
 
-        release_date = datetime.fromisoformat(no_tz(self.raw['track']['album']))
+        release_date = datetime.fromisoformat(no_tz(self.raw['track']['album']['release_date']))
         self.raw['track']['album']['release_date'] = release_date
 
