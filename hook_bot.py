@@ -10,18 +10,15 @@ import discord
 
 from decouple import config, UndefinedValueError
 from discord.ext import commands, tasks
-from pymongo import MongoClient
 
 import hook_logging
 
+from mongo_client import HookMongoClient
 from playlist import Playlist
 from spotipy_client import SpotipyClient
 from track import Track
 
-# TODO: mongodb credentials
-
-# FIXME: can't use self in Command decorator docstrings. Need a way to have this
-#        global and per-class... try setting __docstring__ inside the method
+# FIXME: make this not global
 bot_check_interval = config('HOOK_CHECK_INTERVAL', cast=float)
 DEBUG = config('HOOK_DEBUG', default=False, cast=bool)
 REPORT_REMOVALS = config('HOOK_REPORT_REMOVALS', default=False, cast=bool)
@@ -60,6 +57,7 @@ class HookBot(commands.Cog):
         self.logger = hook_logging._init_logger(__name__)
         self.check_interval = check_interval
         self.sp = spotipy_client or SpotipyClient()
+        self.db_client = HookMongoClient()
 
         try:
             self.snap_id_fname = config('HOOK_SNAPSHOT_ID_FILE', cast=str)
@@ -289,6 +287,29 @@ class HookBot(commands.Cog):
         breakpoint()
         self.logger.info('Entered pdb')
 
+    @commands.command(
+        name='sync',
+        hidden=True,
+        enabled=DEBUG,
+    )
+    async def sync_playlist(self, ctx):
+        """Update the database version of the Playlist with the latest from Spotify"""
+        self.logger.info('Saving %s', self.pl.tracks[0].name)
+        self.db_client.save_track(self.pl.tracks[0])
+
+    @commands.command(
+        name='mongoq',
+        hidden=True,
+        enabled=DEBUG,
+        help='return db contents',
+    )
+    async def send_object_ids(self, ctx):
+        document_ids = []
+        for track in self.db_client.all_tracks():
+            document_ids.append(track['_id'])
+
+        await ctx.send(f'ObjectIds in the database: {document_ids}')
+
     @tasks.loop(minutes=bot_check_interval)
     async def check_for_updates(self):
         """Check for and notify about playlist updates once every 20 minutes."""
@@ -309,6 +330,11 @@ class HookBot(commands.Cog):
 
             self._set_playlist(playlist)
             self._update_snapshot_id()
+
+        # FIXME: into its own method, have sync call it, fix the rest of the logic
+        for track in self.pl.tracks:
+            self.logger.info('Saving %s', track.name)
+            self.db_client.save_track(track)
 
     @check_for_updates.before_loop
     async def before_bot_ready(self):
