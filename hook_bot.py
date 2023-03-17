@@ -183,7 +183,7 @@ class HookBot(commands.Cog):
             type='rich',
             description=f'{artists} • *{track.album["name"]}*',
             url=track.album['external_urls']['spotify'],
-            timestamp=datetime.fromisoformat(track.raw['added_at'][:-1]),  # [:-1] to remove 'Z'ms
+            timestamp=track.raw['added_at'],  # FIXME: conditional based on what's in the data
             color=color,
         ).set_thumbnail(
             url=track.album['images'][0]['url'],

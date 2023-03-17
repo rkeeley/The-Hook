@@ -44,9 +44,13 @@ class Track():
         no_tz = lambda date_str : date_str.replace('Z', '+00:00')
 
         # wanted to use dict.update, but it overwrites things I don't update
-        added_at = datetime.fromisoformat(no_tz(self.raw['added_at']))
-        self.raw['added_at'] = added_at
+        if isinstance(self.raw['added_at'], str):
+            added_at = datetime.fromisoformat(no_tz(self.raw['added_at']))
+            self.raw['added_at'] = added_at
+        elif not isinstance(self.raw['added_at'], datetime.datetime):
+            raise AttributeError(f"Unexpected added_at type {type(self.raw['added_at'])}")
 
-        release_date = datetime.fromisoformat(no_tz(self.raw['track']['album']['release_date']))
-        self.raw['track']['album']['release_date'] = release_date
+        if self.raw['track']['album']['release_date_precision'] == 'day':
+            release_date = datetime.fromisoformat(no_tz(self.raw['track']['album']['release_date']))
+            self.raw['track']['album']['release_date'] = release_date
 

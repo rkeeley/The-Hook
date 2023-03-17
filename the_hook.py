@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from decouple import config
 
 import hook_bot
