@@ -229,7 +229,7 @@ class HookBot(commands.Cog):
 
         old_check_interval = self.check_interval
         self.check_interval = check_interval
-        await ctx.send('Updated the check interval from %f to %f', old_check_interval, self.check_interval)
+        await ctx.send(f'Updated the check interval from {old_check_interval} to {self.check_interval}')
 
     @commands.command(
         name='set_prefix',
@@ -242,7 +242,7 @@ class HookBot(commands.Cog):
 
         old_prefix = self.bot.command_prefix
         self.bot.command_prefix = prefix
-        await ctx.send('Updated the bot prefix from %s to %s', old_prefix, self.bot.command_prefix)
+        await ctx.send(f'Updated the bot prefix from {old_prefix} to {self.bot.command_prefix}')
 
     @commands.command(
         name='pdb',
