@@ -52,28 +52,17 @@ class HookBot(commands.Cog):
         self.pl_name: str = config('HOOK_PLAYLIST_NAME', cast=str)
         self.pl: Playlist = None
         self.update_channel = None
-        self.snap_id_fname: str = 'snapshot-id.txt'
         self.snap_id: str = ''
         self.logger = hook_logging._init_logger(__name__)
         self.check_interval = check_interval
         self.sp = spotipy_client or SpotipyClient()
         self.db_client = HookMongoClient()
 
-        try:
-            self.snap_id_fname = config('HOOK_SNAPSHOT_ID_FILE', cast=str)
-        except UndefinedValueError:
-            self.logger.warning(
-                'The snapshot id file variable, HOOK_SNAPSHOT_ID_FILE, was not set. Using "%s".',
-                self.snap_id_fname)
-
         if not self._set_playlist():
             self.logger.critical('Failed to get the "%s" playlist from Spotify.', self.pl_name)
             raise Exception('Failed to get playlist from Spotify')
 
-        # Set :attr snap_id: to the known snapshot_id, or create the :attr snap_id_fname: file if it
-        # doesn't exist/this is the first run
-        if not self._load_snapshot_id():
-            self._update_snapshot_id()
+        self._update_snapshot_id()
 
         self.check_for_updates.start()
 
@@ -107,8 +96,6 @@ class HookBot(commands.Cog):
             self.pl = playlist
             return True
 
-        # FIXME: I want to do something to confirm with the user that the correct playlist has been
-        #        found
         playlist = self._get_playlist()
         if not playlist:
             self.logger.critical('_set_playlist: Failed to get playlist from Spotify')
@@ -117,49 +104,30 @@ class HookBot(commands.Cog):
         self.pl = playlist
         return True
 
-    def _load_snapshot_id(self):
-        """Sets :attr self.snap_id: to the watched Playlist's snapshot_id.
-
-        :returns: True if the snapshot_id was updated; False otherwise
-        :rtype bool:
-        """
-        if path_exists(self.snap_id_fname):
-            with open(self.snap_id_fname, 'r', encoding='utf-8') as f:
-                self.snap_id = f.read()
-                return True
-
-        return False
-
-    def _save_snapshot_id(self):
-        with open(self.snap_id_fname, 'w', encoding='utf-8') as f:
-            f.write(self.pl.snapshot_id)
-
     def _update_snapshot_id(self) -> bool:
         """Compare :attr snap_id: to the snapshot id of :attr pl: and update the former if needed.
 
-        This will also save the snap_id to the file, but that might need to change when a database
-        is added.
+        self.pl must be set before this method is called.
 
         This does not affect the :attr pl: attribute or any attribute besides :attr snap_id:.
 
         :returns: True if the snapshot id is new; False otherwise
         :rtype bool:
         """
-
-        if not self.snap_id:
-            # First time running this script or using this snapshot id file. Save the id and return
-            self.logger.info('Saving snapshot id to %s - new file or first run', self.snap_id_fname)
-            self._save_snapshot_id()
-            return True
-
-        if self.snap_id != self.pl.snapshot_id:
-            self.logger.info('_update_snapshot_id: Snap ids do not match')
+        if not self.snap_id or self.snap_id != self.pl.snapshot_id:
+            self.logger.info('_update_snapshot_id: updating snapshot id')
+            self.db_client.save_snapshot_id(self.pl.snapshot_id)
             self.snap_id = self.pl.snapshot_id
-            self._save_snapshot_id()
             return True
 
-        self.logger.info('_update_snapshot_id: No difference in snapshot ids.')
         return False
+
+    async def _remove_track(self, track: Track):
+        """Remove a track from the collection, reporting if configured to do so"""
+        if REPORT_REMOVALS:
+            await self.update_channel.send(embed=self._embed_from_track(track, new=False))
+
+        self.db_client.remove_track(track)
 
     def _embed_from_track(self, track: Track, new=True, pl_name=None) \
     -> discord.embeds.Embed:
@@ -321,9 +289,8 @@ class HookBot(commands.Cog):
             self.logger.info('check_for_updates: snapshot ids differ')
 
             removed_tracks, new_tracks = self.pl.get_differences(playlist)
-            if REPORT_REMOVALS:
-                for track in removed_tracks:
-                    await self.update_channel.send(embed=self._embed_from_track(track, new=False))
+            for track in removed_tracks:
+                self._remove_track(track)
 
             for track in new_tracks:
                 await self.update_channel.send(embed=self._embed_from_track(track))
