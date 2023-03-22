@@ -222,9 +222,8 @@ class HookBot(commands.Cog):
             return
 
         old_check_interval = self.check_for_updates.minutes
-        self.check_interval = float(check_interval)
-        self.check_for_updates.change_interval(minutes=self.check_interval)
-        await ctx.send(f'Updated the check interval from {old_check_interval} to {self.check_interval}')
+        self.check_for_updates.change_interval(minutes=float(check_interval))
+        await ctx.send(f'Updated the check interval from {old_check_interval} to {self.check_for_updates.minutes}')
 
     @commands.command(
         name='set_prefix',

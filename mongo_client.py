@@ -71,6 +71,6 @@ class HookMongoClient(MongoClient):
         """Upsert the collection's existing snapshot id entry with :param snapshot_id:"""
         # FIXME: I didn't test this much, but it seems to work as expected
         self.collection.update_one(
-            { self.SNAPSHOT_ID_KEY: { "$exists": True } },
-            { "_id": snapshot_id }
+            { self.SNAPSHOT_ID_KEY: { '$exists': True } },
+            { '_id': snapshot_id }
         )        
