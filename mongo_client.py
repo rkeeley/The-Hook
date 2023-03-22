@@ -47,9 +47,10 @@ class HookMongoClient(MongoClient):
     def save_snapshot_id(self, snapshot_id: str):
         """Save the input :param snapshot_id: to this collection"""
         try:
-            self.collection.insert_one({ self.SNAPSHOT_ID_KEY: snapshot_id })
-        except MongoErrors.DuplicateKeyError: # FIXME: how to do this all at once?
-            self.update_snapshot_id(snapshot_id)
+            self.collection.insert_one({ '_id': snapshot_id, self.SNAPSHOT_ID_KEY: True })
+        except MongoErrors.DuplicateKeyError:
+            # FIXME: this is ugly
+            pass
 
     def _get_snapshot_id(self):
         """Returns the mongo object for the snapshot id document"""
@@ -62,13 +63,14 @@ class HookMongoClient(MongoClient):
         # FIXME: idk how the python typing works here
         snapshot_id_obj = self._get_snapshot_id()
         if snapshot_id_obj:
-            return snapshot_id_obj[self.SNAPSHOT_ID_KEY]
+            return snapshot_id_obj['_id']
 
         return None
 
     def update_snapshot_id(self, snapshot_id: str):
         """Upsert the collection's existing snapshot id entry with :param snapshot_id:"""
+        # FIXME: I didn't test this much, but it seems to work as expected
         self.collection.update_one(
-            { self.SNAPSHOT_ID_KEY: self.get_snapshot_id() },
-            { self.SNAPSHOT_ID_KEY: snapshot_id } # FIXME: how do I use this data
-        )
+            { self.SNAPSHOT_ID_KEY: { "$exists": True } },
+            { "_id": snapshot_id }
+        )        

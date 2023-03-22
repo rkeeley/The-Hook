@@ -14,8 +14,8 @@ if __name__ == '__main__':
     spotipy_client = SpotipyClient()
 
     bot = hook_bot.initialize_bot(
-        check_interval=bot_check_interval,
         prefix=bot_prefix,
+        check_interval=bot_check_interval,
         spotipy_client=spotipy_client)
 
     logger = hook_logging._init_logger('The Hook')

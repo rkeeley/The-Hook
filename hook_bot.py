@@ -18,8 +18,6 @@ from playlist import Playlist
 from spotipy_client import SpotipyClient
 from track import Track
 
-# FIXME: make this not global
-bot_check_interval = config('HOOK_CHECK_INTERVAL', cast=float)
 DEBUG = config('HOOK_DEBUG', default=False, cast=bool)
 REPORT_REMOVALS = config('HOOK_REPORT_REMOVALS', default=False, cast=bool)
 
@@ -47,14 +45,13 @@ class HookBot(commands.Cog):
     :type update_channel: discord.channel.TextChannel
     """
 
-    def __init__(self, bot, check_interval: float, spotipy_client: SpotipyClient = None):
+    def __init__(self, bot, check_interval: float = None, spotipy_client: SpotipyClient = None):
         self.bot = bot
         self.pl_name: str = config('HOOK_PLAYLIST_NAME', cast=str)
         self.pl: Playlist = None
         self.update_channel = None
         self.snap_id: str = ''
         self.logger = hook_logging._init_logger(__name__)
-        self.check_interval = check_interval
         self.sp = spotipy_client or SpotipyClient()
         self.db_client = HookMongoClient()
 
@@ -64,6 +61,7 @@ class HookBot(commands.Cog):
 
         self._update_snapshot_id()
 
+        self.check_for_updates.change_interval(minutes=float(check_interval or config('HOOK_CHECK_INTERVAL', cast=float)))
         self.check_for_updates.start()
 
     @commands.Cog.listener()
@@ -87,21 +85,20 @@ class HookBot(commands.Cog):
         return playlist
 
     def _set_playlist(self, playlist: Playlist = None) -> bool:
-        """Get the playlist from Spotify and set self.pl to it.
+        """Set self.pl to the input playlist or get the configured one from Spotify, updating the database as needed
 
         :returns: True if successful, False otherwise
         :rtype bool:
         """
-        if playlist:
-            self.pl = playlist
-            return True
-
-        playlist = self._get_playlist()
         if not playlist:
-            self.logger.critical('_set_playlist: Failed to get playlist from Spotify')
-            return False
+            playlist = self._get_playlist()
+            if not playlist:
+                self.logger.critical('_set_playlist: Failed to get playlist from Spotify')
+                return False # TODO: raise?
 
         self.pl = playlist
+        for track in self.pl.tracks:
+            self.db_client.save_track(track)
         return True
 
     def _update_snapshot_id(self) -> bool:
@@ -123,11 +120,11 @@ class HookBot(commands.Cog):
         return False
 
     async def _remove_track(self, track: Track):
-        """Remove a track from the collection, reporting if configured to do so"""
+        """Remove a track from the database, reporting if configured to do so"""
+        self.db_client.remove_track(track)
+
         if REPORT_REMOVALS:
             await self.update_channel.send(embed=self._embed_from_track(track, new=False))
-
-        self.db_client.remove_track(track)
 
     def _embed_from_track(self, track: Track, new=True, pl_name=None) \
     -> discord.embeds.Embed:
@@ -204,9 +201,6 @@ class HookBot(commands.Cog):
         brief='Check the watched playlist for updates',
         help=f"""Check the watched playlist for updates.
 
-        Normally the bot checks for updates to the playlist every {bot_check_interval} minutes. This
-        command tells it to check for updates immediately.
-
         The bot will send a message to the update channel before it starts its check. After the
         check is complete it will react to that message with a green and white checkmark emote.
         """,
@@ -227,8 +221,9 @@ class HookBot(commands.Cog):
             await ctx.send('Must provide a check_interval value')
             return
 
-        old_check_interval = self.check_interval
-        self.check_interval = check_interval
+        old_check_interval = self.check_for_updates.minutes
+        self.check_interval = float(check_interval)
+        self.check_for_updates.change_interval(minutes=self.check_interval)
         await ctx.send(f'Updated the check interval from {old_check_interval} to {self.check_interval}')
 
     @commands.command(
@@ -255,32 +250,9 @@ class HookBot(commands.Cog):
         breakpoint()
         self.logger.info('Entered pdb')
 
-    @commands.command(
-        name='sync',
-        hidden=True,
-        enabled=DEBUG,
-    )
-    async def sync_playlist(self, ctx):
-        """Update the database version of the Playlist with the latest from Spotify"""
-        self.logger.info('Saving %s', self.pl.tracks[0].name)
-        self.db_client.save_track(self.pl.tracks[0])
-
-    @commands.command(
-        name='mongoq',
-        hidden=True,
-        enabled=DEBUG,
-        help='return db contents',
-    )
-    async def send_object_ids(self, ctx):
-        document_ids = []
-        for track in self.db_client.all_tracks():
-            document_ids.append(track['_id'])
-
-        await ctx.send(f'ObjectIds in the database: {document_ids}')
-
-    @tasks.loop(minutes=bot_check_interval)
+    @tasks.loop()
     async def check_for_updates(self):
-        """Check for and notify about playlist updates once every 20 minutes."""
+        """Check for and notify about playlist updates"""
         self.logger.info('Checking for updates to "%s"', self.pl_name)
         playlist = self._get_playlist()
         # Note that this doesn't report changes made to the playlist while the bot wasn't running.
@@ -298,11 +270,6 @@ class HookBot(commands.Cog):
             self._set_playlist(playlist)
             self._update_snapshot_id()
 
-        # FIXME: into its own method, have sync call it, fix the rest of the logic
-        for track in self.pl.tracks:
-            self.logger.info('Saving %s', track.name)
-            self.db_client.save_track(track)
-
     @check_for_updates.before_loop
     async def before_bot_ready(self):
         # Need to wait until the bot is running to get the Channel info
@@ -311,15 +278,12 @@ class HookBot(commands.Cog):
                                if c.name == config('HOOK_UPDATE_CHANNEL')][0]
 
 
-def initialize_bot(check_interval: float, prefix: str,
+def initialize_bot(prefix: str, check_interval: float = None,
                    spotipy_client: SpotipyClient = None):
     intents = discord.Intents.default()
     intents.message_content = True
 
-    global bot_check_interval
-    bot_check_interval = check_interval
-
     bot = commands.Bot(intents=intents, command_prefix=prefix)
-    bot.add_cog(HookBot(bot, check_interval, spotipy_client))
+    bot.add_cog(HookBot(bot, check_interval=check_interval, spotipy_client=spotipy_client))
 
     return bot
