@@ -4,9 +4,16 @@ from datetime import datetime
 from typing import List
 
 class Track():
-    """Container for Spotify Track objects to reduce the amount of identical sub-dict code around"""
+    """Spotify Track container and helper.
+
+    :attr raw: raw response data from Spotipy for the Spotify track
+    :type raw: dict
+    """
 
     def __init__(self, track: dict):
+        """
+        :param track: raw response data from Spotipy for the Spotify track
+        """
         self.raw = track
         self._convert_datetime_strs()
 
@@ -18,7 +25,7 @@ class Track():
     @property
     def id(self) -> str:
         """The Track's 'id' data"""
-        # Consider changing this to `tid` instead
+        # TODO: Consider changing this to `tid` instead
         return self.track['id']
 
     @property
@@ -36,14 +43,11 @@ class Track():
         """The Track's 'album' data"""
         return self.track['album']
 
-    def _convert_datetime_strs(self):
-        """Convert iso8601 strings in the input object into Datetime objects
-        so mongo can use more appropriate types
-        """
+    def _convert_datetime_strs(self) -> None:
+        """Convert iso8601 strings in the input object into Datetime objects in place"""
         # fromisoformat doesn't support 'Z', so translate it
         no_tz = lambda date_str : date_str.replace('Z', '+00:00')
 
-        # wanted to use dict.update, but it overwrites things I don't update
         if isinstance(self.raw['added_at'], str):
             added_at = datetime.fromisoformat(no_tz(self.raw['added_at']))
             self.raw['added_at'] = added_at

@@ -9,20 +9,26 @@ from track import Track
 
 
 class Playlist():
-    """Standardized storage for Spotify PlaylistObjects and SimplifiedPlaylistObjects.
+    """Spotify playlist container and helper.
 
-    Right now this only handles the SimplifiedPlaylistObject returned in e.g. Search API responses,
-    but eventually it will handle full PlaylistObjects as well.
+    :attr data: the raw playlist data from Spotipy, as returned by the Spotify API
+    :type data: dict
 
-    Without object IDs, the Search API is the easiest way to find playlists, tracks, etc. through
-    the Spotify API. Search API responses omit the full details of things like track listings for
-    playlists in order to save transmitted data, instead using URLs that can be queried to get the
-    full list. (This code doesn't actually use the URL, but it is in there instead of TrackObjects.)
-    This class uniformly stores track information regardless of the API source.
+    :attr sp: Spotipy client for interacting with the Spotify playlist
+    :type sp: spotipy.client.Spotify
+
+    :attr tracks: list of tracks in the playlist
+    :type tracks: List[Track]
+
+    :attr logger: logger to use for Playlist logs
+    :type logger: logging.Logger
     """
 
-    # TODO: Add a way to make this given the pl name instead of needing to use a separate function?
     def __init__(self, spotipy_client: SpotipyClient, pl: dict):
+        """
+        :param spotipy_client: SpotipyClient to use when interacting with Spotipy/Spotify API
+        :param pl: raw playlist response data from Spotipy
+        """
         self.data = pl
         self._spotipy_client = spotipy_client
         self.sp = self._spotipy_client.client
@@ -30,17 +36,15 @@ class Playlist():
         self.logger = hook_logging._init_logger(__name__)
 
     @staticmethod
-    def _playlist_from_search(spotipy_client: SpotipyClient, name: str) -> dict:
+    def _playlist_from_search(spotipy_client: SpotipyClient, name: str) -> Playlist:
         """Return the dict with the playlist data from a search endpoint response"""
         playlist = spotipy_client.client.search(q=f'"{name}"', type='playlist', limit=1)
         if not playlist:
-            # logger.critical('Spotify search for playlist "%s" failed', name)
             raise KeyError(f'Spotify search for playlist "{name}" failed')
 
         try:
             playlist = playlist['playlists']['items'][0]
         except IndexError:
-            # logger.critical('No playlist data returned from Spotify for "%s"', name)
             raise KeyError(f'Could not find a playlist called "{name}".') from None
 
         return Playlist(spotipy_client, playlist)
@@ -60,7 +64,6 @@ class Playlist():
         """Get the playlist with id :param plid: and return a Playlist object for it."""
         playlist = spotipy_client.client.playlist(plid)
         if not playlist:
-            # logger.critical('Spotify search for playlist with id %s failed', plid)
             raise KeyError(f'Could not find a playlist with id "{plid}"')
 
         return Playlist(spotipy_client, playlist)
@@ -68,7 +71,7 @@ class Playlist():
     @property
     def id(self) -> str:
         """Return the Playlist's 'id' data"""
-        # Consider changing this to `plid` or `pid` instead to avoid class confusion?
+        # TODO: Consider changing this to `plid` or `pid` instead to avoid class confusion?
         return self.data['id']
 
     @property
@@ -111,7 +114,7 @@ class Playlist():
         :returns: List of '<artist name(s)> - <title>' strings for Tracks in :param track_list:
         """
         lst = []
-        # TODO: Too many tr*k? variable names in this scope
+        # FIXME: variable names in this method
         for number, trk in enumerate([tr.track for tr in tracks]):
             if limit and number >= limit:
                 break
@@ -130,9 +133,11 @@ class Playlist():
         :param other_pl: Another Playlist object with Tracks to compare.
                          Can be the same Playlist with a different Snapshot id.
         :type other_pl: Playlist
-        :returns: A tuple with unique Tracks from (self.playlist, other_pl)
+
+        :returns: A tuple with lists of unique Tracks from (self.playlist, other_pl)
+        :rtype: Tuple[List[Track], List[Track]
         """
-        # Runtime complexity can absolutely be improved here
+        # TODO: Runtime complexity can absolutely be improved here
         self_td = {t.id: t for t in self.tracks}
         other_tracks = [t for t in other_pl.tracks if t.id not in self_td]
 
