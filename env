@@ -54,3 +54,7 @@ export HOOK_DEBUG=bool
 # you to copy it into a browser yourself to get the redirected URL. Paste that URL back into the console to allow
 # spotipy to access your music
 export HOOK_HEADLESS=False
+
+# Connection string for the mongodb database containing Hook data
+# Format: "mongodb://[<username>:<password>@]<host>[:<port>][/[<auth database>][?<options>]]"
+export HOOK_MONGODB_CONNECTION_STRING = "string"
